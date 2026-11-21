@@ -1,0 +1,80 @@
+=== running LOOK suite (median of 5, isolated) ===
+string_slice,100000000,1235.013
+object_create,7412500,1451.202
+nested_fn,24650000,1610.098
+json_parse,42000000,653.626
+string_search,994000000,175.476
+exception,3000000,111.653
+assoc_access,247500000,580.717
+loop,100000000,3203.002
+recursion,2178309,347.844
+regex,1500000,17457.840
+string_concat,20000000,593.289
+array_push_pop,989999937,1149.155
+int_arith,105800000,762.130
+float_arith,722111357,1073.976
+json_serialize,52000000,685.267
+fn_call,8600000,1355.124
+array_create_iterate,989999937,1218.832
+=== running Node suite (Node 22, median of 5, isolated) ===
+string_slice,100000000,8.837
+object_create,7412500,17.978
+nested_fn,24650000,35.952
+json_parse,42000000,349.950
+string_search,994000000,3.626
+exception,3000000,2784.838
+assoc_access,247500000,203.386
+loop,100000000,367.957
+recursion,2178309,14.130
+regex,1500000,112.944
+string_concat,20000000,58.464
+array_push_pop,989999937,81.397
+int_arith,105800000,82.278
+float_arith,722111357,31.675
+json_serialize,52000000,147.537
+fn_call,8600000,72.142
+array_create_iterate,989999937,37.382
+=== running PHP suite (8.3 + OPcache + JIT, median of 5, isolated) ===
+string_slice,100000000,19.333
+object_create,7412500,141.114
+nested_fn,24650000,82.155
+json_parse,42000000,442.296
+string_search,994000000,4.807
+exception,3000000,210.433
+assoc_access,247500000,132.130
+loop,100000000,484.490
+recursion,2178309,23.326
+regex,1500000,65.863
+string_concat,20000000,130.266
+array_push_pop,989999937,235.183
+int_arith,105800000,105.261
+float_arith,722111357,32.358
+json_serialize,52000000,91.373
+fn_call,8600000,92.711
+array_create_iterate,989999937,55.141
+
+=== comparison (checksum MUST match across all three = equivalence guard) ===
+benchmark                   LOOK_ms      Node_ms       PHP_ms  LOOK/Node   LOOK/PHP    chk
+array_create_iterate       1218.832       37.382       55.141     32.60x     22.10x     OK
+array_push_pop             1149.155       81.397      235.183     14.12x      4.89x     OK
+assoc_access                580.717      203.386      132.130      2.86x      4.40x     OK
+exception                   111.653     2784.838      210.433      0.04x      0.53x     OK
+float_arith                1073.976       31.675       32.358     33.91x     33.19x     OK
+fn_call                    1355.124       72.142       92.711     18.78x     14.62x     OK
+int_arith                   762.130       82.278      105.261      9.26x      7.24x     OK
+json_parse                  653.626      349.950      442.296      1.87x      1.48x     OK
+json_serialize              685.267      147.537       91.373      4.64x      7.50x     OK
+loop                       3203.002      367.957      484.490      8.70x      6.61x     OK
+nested_fn                  1610.098       35.952       82.155     44.78x     19.60x     OK
+object_create              1451.202       17.978      141.114     80.72x     10.28x     OK
+recursion                   347.844       14.130       23.326     24.62x     14.91x     OK
+regex                     17457.840      112.944       65.863    154.57x    265.06x     OK
+string_concat               593.289       58.464      130.266     10.15x      4.55x     OK
+string_search               175.476        3.626        4.807     48.39x     36.50x     OK
+string_slice               1235.013        8.837       19.333    139.75x     63.88x     OK
+
+=== startup / cold start (best-of-5, wall-time of a trivial script) ===
+  (includes docker+process spawn; relative gap is what matters)
+  LOOK: 737ms
+  Node: 704ms
+  PHP:  689ms

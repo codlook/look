@@ -48,7 +48,8 @@ container so its CPU never steals from the server under test.
 
 - Docker, `--cpus=2 --memory=4g`, same base image family across runtimes.
 - Load generator (`wrk` / `ab`): separate container, uncapped, so it is never the bottleneck.
-- Warm-up before every timed run; **best-of-3**, report the best (least-noisy) run.
+- Warm-up before every timed run; **five runs, report the median run** (since 2026-11-21 —
+  the earlier result tables below were best-of-3).
 - **Hygiene rule 9 is mandatory:** under any CPU quota, read `/sys/fs/cgroup/cpu.stat` before
   trusting tail latency — `nr_throttled > 0` under load means the numbers include CFS scheduler
   throttling, not server latency. Set worker threads ≤ the quota and re-measure. (This is the
@@ -129,18 +130,127 @@ less credible than the honest split, and less true.
 ## Running
 
 ```bash
-# World 1 — language core (checksum-verified, three languages)
-cpp/bench/micro/compare.sh
+# World 1 — language core (checksum-verified, three languages); LK_BIN = directory holding lk
+LK_BIN=/path/to/look/bin RUNS=5 cpp/bench/micro/compare.sh
 
 # World 2/3 — web + DB, in the locked container shape
 cpp/bench/race.sh            # hello / JSON / template throughput + tail
+RUNS=5 cpp/bench/race2.sh "$PWD" <LOOK bin dir> <older LOOK bin dir> "LOOK <older version>"   # JSON + MySQL row, six runtimes
 # DB apps under cpp/bench/dbbench/{look,node,php}/ — start each, then drive from the load-gen container
 
 # Always: after any engine change, prove correctness BEFORE trusting perf
 bash cpp/tests/differential_test.sh build/lk build/lk-fcgi
 ```
 
-## Results — 2026-11-05, current (tests 8 and 12, six runtimes)
+## Results — 2026-11-21, LOOK 1.1.4 (tests 1–7 and 8, 12, six runtimes)
+
+**What changed in the method.** From this run on, every number is the **median of five runs**
+(the run with the median requests/s, with its own p50/p99 and errors; for the language core, the
+median time of each benchmark). The earlier tables below are **best-of-3**, which favours every
+runtime by a few percent — so where an older number looks better than a new one by a few percent,
+that is the method, not a slowdown. Differences of 10% or more are real; they are named below.
+
+**Conditions** (also at the top of each raw file):
+
+| | |
+| --- | --- |
+| Host | 16 CPUs, 16 GB RAM, Windows 11 + Docker Desktop 29.7.2, WSL2 kernel 6.6.87.2 — a developer machine, idle during the runs; read the numbers relative to each other |
+| Servers | `--cpus=2 --memory=4g`, one at a time; wrk `-t8 -d8s` from a separate, uncapped container; warm-up before each runtime |
+| LOOK | **1.1.4 (36fb8dc)** and **1.0.52 (5f8e20f)** — the published Linux packages, `lk-fcgi --mode http` |
+| Node | 22.23.2, `cluster` ×2 (`cpp/bench/app.js`, `dbbench/node/dbapp.js`) |
+| Go | 1.22 (`golang:1.22`), `net/http` + go-sql-driver/mysql 1.8.1, `GOMAXPROCS=2` |
+| Elixir | 1.16, Plug on Bandit, MyXQL with `nodelay: true` |
+| PHP | **8.5.9** FPM + nginx (`trafex/php-nginx:latest`) for the web tests; 8.3 CLI with OPcache + JIT for the language core. The fairness lock above names 8.3; the web image has moved to 8.5 since the last run, and it was measured as shipped |
+| MySQL | 8.4.11, 1,000 rows, `SELECT id, name, email FROM users WHERE id = 42` |
+
+Commands (from the repository root):
+
+```bash
+# language core: LOOK / Node / PHP, checksums must match
+LK_BIN=/path/to/look-1.1.4/bin RUNS=5 bash cpp/bench/micro/compare.sh
+# web: trivial JSON + one MySQL row, six runtimes
+RUNS=5 bash cpp/bench/race2.sh "$PWD" /path/to/look-1.1.4/bin /path/to/look-1.0.52/bin "LOOK 1.0.52"
+```
+
+Raw output: `cpp/bench/results/2026-11-21-race2.txt`, `cpp/bench/results/2026-11-21-micro.txt`.
+
+**Trivial JSON** — requests/s · p99 · RSS at c=1000; the 2026-11-05 value (best-of-3) after the arrow
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 1.1.4 | 105,520 ← 93,858 | **1.5 ms** ← 2.2 ms | 96,803 ← 88,928 | **13.6 ms** ← 16 ms | 23.6 MB ← **4.4 MB** |
+| LOOK 1.0.52 | 16,223 | 83 ms | 14,658 | 315 ms | 9.7 MB |
+| Go 1.22 | **119,293** ← 110,879 | 2.3 ms | **108,282** ← 100,629 | 15 ms | 35 MB |
+| Node 22 (cluster ×2) | 101,035 ← 98,085 | 2.1 ms | 86,645 ← 77,140 | 1.06 s | 124 MB |
+| Elixir (Bandit) | 53,556 ← 51,794 | 3.1 ms | 48,140 ← 44,395 | 44 ms | 128 MB |
+| PHP 8.5 (FPM + nginx) | 5,082 ← 4,629 | 65 ms | 5,263 ← 4,910 | 486 ms | 125 MB |
+
+**One DB row** (MySQL 8.4)
+
+| Runtime | c=100 | p99 | c=1000 | p99 | RSS at c=1000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LOOK 1.1.4 | **34,512** ← 30,258 | **3.8 ms** ← 5.3 ms | **30,514** ← 30,351 | **49 ms** ← 47 ms | 52 MB ← 25 MB |
+| LOOK 1.0.52 | 6,331 | 154 ms | 4,563 | 1.20 s | 58 MB |
+| Go 1.22 | 25,196 ← 25,568 | 50 ms | 24,002 ← 23,988 | 1.06 s | **51 MB** |
+| Node 22 (cluster ×2) | 14,790 ← 14,127 | 14 ms | 11,421 ← 12,092 | 403 ms | 289 MB |
+| Elixir (Bandit) | 14,480 ← 13,801 | 12 ms | 13,662 ← 13,016 | 91 ms ¹ | 189 MB |
+| PHP 8.5 (FPM + nginx) | 2,252 ← 2,212 | 284 ms | 2,742 ← 2,570 | 761 ms | 129 MB |
+
+¹ 146 non-2xx responses at c=1000. Go had 78 wrk timeouts at c=1000 on the DB test and 64 at c=100
+on JSON, Node 39 at c=1000 on JSON, LOOK 1.1.4 48 at c=50 on JSON (as did Node), LOOK 1.0.52 2 at
+c=1000 on the DB test.
+
+**Language core** (`cpp/bench/micro`, 17 tests, all 17 checksums match) — milliseconds, median of
+five; LOOK ÷ Node now and in the previous published table (best-of-3, an earlier 1.1 development
+build). Sorted by today's ratio.
+
+| Test | LOOK 1.1.4 | Node 22 | PHP 8.3 + JIT | LOOK ÷ Node | before |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| exception | **112** | 2,785 | 210 | **0.04×** | 0.04× |
+| json_parse | 654 | 350 | 442 | 1.9× | 2.0× |
+| assoc_access | 581 | 203 | 132 | 2.9× | 7.3× |
+| json_serialize | 685 | 148 | 91 | 4.6× | 4.2× |
+| loop | 3,203 | 368 | 484 | 8.7× | 7.7× |
+| int_arith | 762 | 82 | 105 | 9.3× | 8.1× |
+| string_concat | 593 | 58 | 130 | 10.1× | 32.5× |
+| array_push_pop | 1,149 | 81 | 235 | 14.1× | 28.5× |
+| fn_call | 1,355 | 72 | 93 | 18.8× | 15.9× |
+| recursion | 348 | 14 | 23 | 24.6× | 22.5× |
+| array_create_iterate | 1,219 | 37 | 55 | 32.6× | 50.4× |
+| float_arith | 1,074 | 32 | 32 | 33.9× | 29.1× |
+| nested_fn | 1,610 | 36 | 82 | 44.8× | 37.0× |
+| string_search | 175 | 3.6 | 4.8 | 48.4× | 41.4× |
+| object_create | 1,451 | 18 | 141 | 80.7× | 81.8× |
+| string_slice | 1,235 | 8.8 | 19 | 139.8× | 132.9× |
+| regex | 17,458 | 113 | 66 | 154.6× | 151× (the ReDoS guard, see the caveat above) |
+
+What it says:
+- **Web:** LOOK 1.1.4 has the lowest p99 of the six on both tests at c=100 and c=1000, the most
+  requests/s on the database test (1.4× Go, 2.3× Node), and 88–89% of Go on trivial JSON, ahead of
+  Node. Against 1.0.52 it serves 6.5× the requests on trivial JSON and 5.5–6.7× on MySQL.
+- **Language core:** maps, strings and arrays got 1.5–2.9× faster since the previous table
+  (`assoc_access`, `string_concat`, `array_push_pop`, `array_create_iterate`). Node's JIT still wins
+  every compute test except `exception`; that is structural (bytecode VM against a JIT).
+
+**Open — slower than before, measured the same way** (each binary five times on the same machine,
+fastest run, milliseconds):
+
+| | 1.0.50 | 1.1.2 | 1.1.4 |
+| --- | ---: | ---: | ---: |
+| fn_call | 1,170 | 1,355 | 1,342 (+15%) |
+| nested_fn | 1,371 | 1,628 | 1,583 (+15%) |
+| recursion | 288 | 343 | 344 (+19%) |
+| int_arith | 654 | 678 | 734 (+12%) |
+| loop | 2,798 | 2,918 | 3,088 (+10%) |
+
+- **Function calls and arithmetic** are 10–19% slower in 1.1 than in 1.0 (on the same machine; the
+  same source built twice differs by about 5%, so this is beyond the noise). The cause is not yet
+  found; it is recorded here until it is.
+- **Memory at 1,000 connections:** LOOK's RSS was 4.4 MB on trivial JSON and 25 MB on the database
+  test on 2026-11-05; it is 23.6 MB and 52 MB now. Still the smallest or close to it, but five times
+  the earlier JSON figure. Not yet explained.
+
+## Results — 2026-11-05 (tests 8 and 12, six runtimes)
 
 `v2` at bb118f4: everything below plus the pool handoff (735278f — a returned connection goes to
 the request that waited longest), the buffered-reply fix (7f84edd) and no self-wake on a fiber's

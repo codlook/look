@@ -1,0 +1,78 @@
+==================================================================
+ RACE @2CPU/4GB — median of 5 · wrk -t8 -d8s · 2026-11-21
+ LOOK:        LOOK 1.1.4 (36fb8dc, linux/amd64)
+ LOOK 1.0.52: LOOK 1.0.52 (5f8e20f, linux/amd64)
+ Node:        v22.23.2
+ Go:          golang:1.22 (look-bench-go, cpp/bench/go/Dockerfile)
+ Elixir:      elixir:1.16 (look-bench-elixir, cpp/bench/elixir/Dockerfile)
+ PHP:         PHP 8.5.9 (cli) (built: Aug  5 2026 05:45:39) (NTS)
+ MySQL:       /usr/sbin/mysqld  Ver 8.4.11 for Linux on x86_64 (MySQL Community Server - GPL)
+ Docker:      29.7.2 (linux/amd64, kernel 6.6.87.2-microsoft-standard-WSL2)
+ Host CPUs:   16 CPUs, 16613822464 bytes RAM
+==================================================================
+
+########## 1) TRIVIAL JSON ##########
+  LOOK                   | sanity:{"ok":true,"msg":"hello"}
+      c=50    rps=103045.48  p50=457.00us  p99=721.00us  errors=connect0,read0,write0,timeout48 (min 102118.00, max 103453.77 of 5 runs)
+      c=100   rps=105520.03  p50=0.89ms    p99=1.53ms    errors=0            (min 104419.17, max 105957.63 of 5 runs)
+      c=1000  rps=96803.13   p50=10.14ms   p99=13.64ms   errors=0            (min 95609.97, max 97880.63 of 5 runs)
+      RSS idle=5.238MiB  c=100=7.039MiB  c=1000=23.57MiB  throttled(c=100)=116
+  LOOK 1.0.52            | sanity:{"ok":true,"msg":"hello"}
+      c=50    rps=15478.62   p50=0.93ms    p99=79.21ms   errors=0            (min 12832.71, max 16830.80 of 5 runs)
+      c=100   rps=16223.02   p50=2.03ms    p99=83.20ms   errors=0            (min 14496.50, max 17558.27 of 5 runs)
+      c=1000  rps=14658.39   p50=84.72ms   p99=314.83ms  errors=0            (min 12670.10, max 17980.02 of 5 runs)
+      RSS idle=4.32MiB  c=100=4.711MiB  c=1000=9.652MiB  throttled(c=100)=404
+  Node 22 (cluster x2)   | sanity:{"ok":true,"msg":"hello"}
+      c=50    rps=100001.92  p50=445.00us  p99=1.30ms    errors=connect0,read0,write0,timeout48 (min 97425.61, max 102715.19 of 5 runs)
+      c=100   rps=101034.79  p50=0.89ms    p99=2.14ms    errors=0            (min 100505.64, max 104169.04 of 5 runs)
+      c=1000  rps=86644.84   p50=11.01ms   p99=1.06s     errors=connect0,read0,write0,timeout39 (min 85496.36, max 88212.82 of 5 runs)
+      RSS idle=53.46MiB  c=100=97.97MiB  c=1000=123.6MiB  throttled(c=100)=282
+  Go 1.22 net/http       | sanity:{"msg":"hello","ok":true}
+      c=50    rps=119868.47  p50=378.00us  p99=1.16ms    errors=0            (min 118687.80, max 120294.19 of 5 runs)
+      c=100   rps=119293.07  p50=774.00us  p99=2.32ms    errors=connect0,read0,write0,timeout64 (min 117093.33, max 119530.55 of 5 runs)
+      c=1000  rps=108282.28  p50=9.00ms    p99=15.33ms   errors=0            (min 107267.96, max 108840.12 of 5 runs)
+      RSS idle=6.984MiB  c=100=8.203MiB  c=1000=34.8MiB  throttled(c=100)=79
+  Elixir (Bandit)        | sanity:{"ok":true,"msg":"hello"}
+      c=50    rps=54567.97   p50=840.00us  p99=1.83ms    errors=0            (min 54299.31, max 54990.09 of 5 runs)
+      c=100   rps=53555.57   p50=1.71ms    p99=3.09ms    errors=0            (min 52931.11, max 53608.30 of 5 runs)
+      c=1000  rps=48140.48   p50=18.95ms   p99=43.63ms   errors=0            (min 47905.95, max 48483.71 of 5 runs)
+      RSS idle=89.27MiB  c=100=91.94MiB  c=1000=127.6MiB  throttled(c=100)=109
+  PHP (fpm+nginx)        | sanity:{"ok":true,"msg":"hello"}
+      c=50    rps=4908.00    p50=8.86ms    p99=47.04ms   errors=connect0,read0,write0,timeout1 (min 4682.46, max 5227.84 of 5 runs)
+      c=100   rps=5082.24    p50=17.59ms   p99=64.58ms   errors=0            (min 4817.67, max 5287.27 of 5 runs)
+      c=1000  rps=5263.23    p50=165.76ms  p99=486.28ms  errors=0            (min 5148.01, max 5387.31 of 5 runs)
+      RSS idle=84.87MiB  c=100=96.38MiB  c=1000=124.5MiB  throttled(c=100)=309
+
+########## 2) ONE DB ROW (MySQL 8) ##########
+  LOOK                   | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=35562.13   p50=1.33ms    p99=2.30ms    errors=0            (min 35185.72, max 35843.63 of 5 runs)
+      c=100   rps=34512.30   p50=2.77ms    p99=3.76ms    errors=0            (min 33789.85, max 35123.75 of 5 runs)
+      c=1000  rps=30514.18   p50=31.96ms   p99=49.48ms   errors=0            (min 29689.28, max 31292.49 of 5 runs)
+      RSS idle=6.504MiB  c=100=7.715MiB  c=1000=52.41MiB  throttled(c=100)=0
+  LOOK 1.0.52            | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=5297.43    p50=3.85ms    p99=88.53ms   errors=0            (min 5000.08, max 7478.53 of 5 runs)
+      c=100   rps=6330.91    p50=6.43ms    p99=153.76ms  errors=0            (min 4710.18, max 6790.70 of 5 runs)
+      c=1000  rps=4563.18    p50=167.76ms  p99=1.20s     errors=connect0,read0,write0,timeout2 (min 4433.48, max 5193.54 of 5 runs)
+      RSS idle=8.328MiB  c=100=7.832MiB  c=1000=58.43MiB  throttled(c=100)=403
+  Node 22 (cluster x2)   | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=14600.78   p50=3.06ms    p99=10.03ms   errors=0            (min 14392.19, max 14895.36 of 5 runs)
+      c=100   rps=14790.35   p50=6.08ms    p99=13.59ms   errors=0            (min 14244.09, max 14847.07 of 5 runs)
+      c=1000  rps=11420.86   p50=81.10ms   p99=402.87ms  errors=0            (min 10731.76, max 12619.51 of 5 runs)
+      RSS idle=192.6MiB  c=100=252.4MiB  c=1000=288.5MiB  throttled(c=100)=399
+  Go 1.22 net/http       | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=21912.82   p50=1.77ms    p99=10.25ms   errors=0            (min 19679.34, max 24106.71 of 5 runs)
+      c=100   rps=25196.30   p50=2.71ms    p99=50.15ms   errors=0            (min 23238.35, max 26151.32 of 5 runs)
+      c=1000  rps=24001.80   p50=28.71ms   p99=1.06s     errors=connect0,read0,write0,timeout78 (min 23441.37, max 24414.19 of 5 runs)
+      RSS idle=7.699MiB  c=100=8.812MiB  c=1000=51.2MiB  throttled(c=100)=121
+  Elixir (Bandit)        | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=13794.02   p50=3.23ms    p99=6.76ms    errors=0            (min 11287.64, max 14268.01 of 5 runs)
+      c=100   rps=14479.73   p50=6.45ms    p99=11.51ms   errors=0            (min 14142.54, max 14605.37 of 5 runs)
+      c=1000  rps=13662.19   p50=70.71ms   p99=90.89ms   errors=non2xx=146   (min 12769.54, max 13876.00 of 5 runs)
+      RSS idle=89.11MiB  c=100=92.09MiB  c=1000=189.2MiB  throttled(c=100)=264
+  PHP (fpm+nginx)        | sanity:[{"id":42,"name":"user42","email":"user42
+      c=50    rps=2666.88    p50=13.61ms   p99=158.29ms  errors=0            (min 1762.64, max 2812.79 of 5 runs)
+      c=100   rps=2251.87    p50=31.76ms   p99=284.12ms  errors=0            (min 2059.64, max 2675.56 of 5 runs)
+      c=1000  rps=2742.09    p50=318.38ms  p99=760.95ms  errors=0            (min 2090.07, max 2823.95 of 5 runs)
+      RSS idle=94.12MiB  c=100=102.3MiB  c=1000=129.1MiB  throttled(c=100)=381
+
+DONE

@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# LOOK (this branch) vs LOOK 1.0.45 vs Node vs Go vs Elixir vs PHP — the same two endpoints, the same container shape.
+# LOOK (this build) vs an older LOOK vs Node vs Go vs Elixir vs PHP — the same two endpoints, the same container shape.
 #   1) trivial JSON     GET / → {"ok":true,"msg":"hello"}
 #   2) one DB row       GET / → SELECT id, name, email FROM users WHERE id = 42 (MySQL 8) → JSON
 # Servers: --cpus=2 --memory=4g. Load generator (wrk): separate, uncapped container. Warm-up, then
-# best-of-3 per concurrency level. RSS (docker stats) after c=100 and after c=1000, CPU throttling
+# RUNS runs per concurrency level (default 5); the run with the MEDIAN requests/s is reported, with
+# its own p50/p99 and errors, and the lowest and highest requests/s next to it. RSS (docker stats) after c=100 and after c=1000, CPU throttling
 # (cpu.stat nr_throttled) over the c=100 runs — BENCHMARK.md hygiene rule 9.
 # Every runtime runs its production default; the only knob is the one each needs to see 2 CPUs:
 # GOMAXPROCS=2 (Go 1.22 does not read the cgroup quota). LOOK, Node (cluster ×2), BEAM and
 # PHP-FPM run as shipped. Elixir's MyXQL pool gets socket_options: [nodelay: true]: without it every
 # query waited ~40 ms on Nagle + delayed ACK (360 req/s instead of 15k) — a setting any user would fix.
-# Usage: race2.sh <look repo root> <LOOK bin dir> <LOOK 1.0.45 bin dir>     (bin dir: lk-fcgi inside)
+# Usage: race2.sh <look repo root> <LOOK bin dir> <older LOOK bin dir> [older label]   (bin dir: lk-fcgi inside)
+#   e.g. race2.sh . /path/to/1.1.4/bin /path/to/1.0.52/bin "LOOK 1.0.52"; RUNS=N changes the run count.
 #   needs images: look-build, look-bench-go, look-bench-elixir (cpp/bench/{go,elixir}/Dockerfile),
 #   node:22-alpine, trafex/php-nginx, mysql:8, williamyeh/wrk, curlimages/curl
 export MSYS_NO_PATHCONV=1
 set -u
-ROOT="$1"; V2="$2"; V1="$3"; NET=benchnet
+ROOT="$1"; V2="$2"; V1="$3"; V1LABEL="${4:-LOOK 1.0.45}"; NET=benchnet
+RUNS="${RUNS:-5}"
 LEVELS="${LEVELS:-50 100 1000}"
 CAP="--cpus=2 --memory=4g --ulimit nofile=1048576:1048576"
 DBENV="-e DB_HOST=mysqlbench -e DB_PASS=benchpass"; DSN="mysql://root:benchpass@mysqlbench/bench"
@@ -49,20 +52,24 @@ sweep(){  # label
   local idle=$(ram) r100="" r1000="" t0="" t1=""
   for c in $LEVELS; do
     [ "$c" = 100 ] && t0=$(throttle)
-    local best=0 bp50="" bp99="" berr=""
-    for i in 1 2 3; do
+    local rows=""
+    for i in $(seq 1 "$RUNS"); do
       local out=$(docker run --rm --network $NET --ulimit nofile=1048576:1048576 williamyeh/wrk -t8 -c"$c" -d8s --latency "http://$ip:8080/" 2>/dev/null)
       local r=$(echo "$out" | awk '/Requests\/sec/{print $2}')
-      if [ -n "$r" ] && awk "BEGIN{exit !($r>$best)}"; then
-        best=$r
-        bp50=$(echo "$out" | grep -A4 Distribution | awk '/50%/{print $2}')
-        bp99=$(echo "$out" | grep -A4 Distribution | awk '/99%/{print $2}')
-        berr=$(echo "$out" | awk '/Non-2xx/{printf "non2xx=%s ", $NF} /Socket errors/{sub(/.*Socket errors: */, ""); printf "%s", $0}'); berr=${berr:-0}
-      fi
+      [ -z "$r" ] && continue
+      local p50=$(echo "$out" | grep -A4 Distribution | awk '/50%/{print $2}')
+      local p99=$(echo "$out" | grep -A4 Distribution | awk '/99%/{print $2}')
+      local err=$(echo "$out" | awk '/Non-2xx/{printf "non2xx=%s ", $NF} /Socket errors/{sub(/.*Socket errors: */, ""); gsub(/ /, ""); printf "%s", $0}'); err=${err:-0}
+      rows="$rows$r $p50 $p99 $err"$'\n'
     done
+    # the run with the median requests/s (its own latency and errors), plus the spread
+    local med=$(printf '%s' "$rows" | sort -n | awk -v n="$RUNS" 'NF{a[++k]=$0} END{print a[int((k+1)/2)]}')
+    local lo=$(printf '%s' "$rows" | sort -n | awk 'NF{print $1; exit}')
+    local hi=$(printf '%s' "$rows" | sort -n | awk 'NF{v=$1} END{print v}')
+    local best=$(echo "$med" | awk '{print $1}') bp50=$(echo "$med" | awk '{print $2}') bp99=$(echo "$med" | awk '{print $3}') berr=$(echo "$med" | awk '{print $4}')
     [ "$c" = 100 ] && { t1=$(throttle); r100=$(ram); }
     [ "$c" = 1000 ] && r1000=$(ram)
-    printf "      c=%-5s rps=%-10s p50=%-9s p99=%-9s errors=%s\n" "$c" "$best" "$bp50" "$bp99" "$berr"
+    printf "      c=%-5s rps=%-10s p50=%-9s p99=%-9s errors=%-12s (min %s, max %s of %s runs)\n" "$c" "$best" "$bp50" "$bp99" "$berr" "$lo" "$hi" "$RUNS"
   done
   local thr="-"; [ -n "$t0" ] && [ -n "$t1" ] && thr=$((t1 - t0))
   printf "      RSS idle=%s  c=100=%s  c=1000=%s  throttled(c=100)=%s\n" "${idle:-NA}" "${r100:-NA}" "${r1000:-NA}" "$thr"
@@ -76,13 +83,20 @@ look(){  # look <bin dir> <app.lk> [docker env...]
 }
 
 echo "=================================================================="
-echo " RACE @2CPU/4GB — best-of-3 · wrk -t8 -d8s · $(date -u +%F)"
+echo " RACE @2CPU/4GB — median of $RUNS · wrk -t8 -d8s · $(date -u +%F)"
 echo " LOOK:        $(docker run --rm -v "$V2:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
-echo " LOOK 1.0.45: $(docker run --rm -v "$V1:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
+echo " $V1LABEL: $(docker run --rm -v "$V1:/b:ro" look-build /b/lk-fcgi --version 2>&1 | head -1)"
+echo " Node:        $(docker run --rm node:22-alpine node --version 2>&1)"
+echo " Go:          $(grep -m1 FROM "$ROOT/cpp/bench/go/Dockerfile" | awk '{print $2}') (look-bench-go, cpp/bench/go/Dockerfile)"
+echo " Elixir:      $(grep -m1 FROM "$ROOT/cpp/bench/elixir/Dockerfile" | awk '{print $2}') (look-bench-elixir, cpp/bench/elixir/Dockerfile)"
+echo " PHP:         $(docker run --rm --entrypoint php trafex/php-nginx:latest -v 2>&1 | head -1)"
+echo " MySQL:       $(docker run --rm --entrypoint mysqld mysql:8 --version 2>&1 | head -1)"
+echo " Docker:      $(docker version --format '{{.Server.Version}} ({{.Server.Os}}/{{.Server.Arch}}, kernel {{.Server.KernelVersion}})' 2>&1)"
+echo " Host CPUs:   $(docker info --format '{{.NCPU}} CPUs, {{.MemTotal}} bytes RAM' 2>&1)"
 echo "=================================================================="
 echo; echo "########## 1) TRIVIAL JSON ##########"
 look "$V2" bench.lk;                                              sweep "LOOK"
-look "$V1" bench.lk;                                              sweep "LOOK 1.0.45"
+look "$V1" bench.lk;                                              sweep "$V1LABEL"
 run -v "$ROOT/cpp/bench:/app:ro" -w /app node:22-alpine node app.js;  sweep "Node 22 (cluster x2)"
 run -e GOMAXPROCS=2 look-bench-go;                                sweep "Go 1.22 net/http"
 run look-bench-elixir;                                            sweep "Elixir (Bandit)"
@@ -91,7 +105,7 @@ run -v "$ROOT/cpp/bench/phproot:/var/www/html:ro" trafex/php-nginx:latest; sweep
 echo; echo "########## 2) ONE DB ROW (MySQL 8) ##########"
 setup_db
 look "$V2" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK"
-look "$V1" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "LOOK 1.0.45"
+look "$V1" dbbench/look/dbapp.lk -e DB_DSN=$DSN;                  sweep "$V1LABEL"
 run $DBENV -v "$ROOT/cpp/bench/dbbench/node:/app:ro" -w /app node:22-alpine node dbapp.js; sweep "Node 22 (cluster x2)"
 run $DBENV -e GOMAXPROCS=2 look-bench-go;                         sweep "Go 1.22 net/http"
 run $DBENV look-bench-elixir;                                     sweep "Elixir (Bandit)"
