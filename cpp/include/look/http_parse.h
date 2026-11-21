@@ -77,10 +77,22 @@ inline bool http_parse_request(const std::string& raw, HttpRequest& req) {
                 auto ex = req.headers.find("content-length");
                 if (ex != req.headers.end() && ex->second != val) return false;
             }
+            // Several Transfer-Encoding lines are one list (RFC 9110 §5.3): they are joined, so two "chunked"
+            // lines are "chunked, chunked", which the server refuses (only an exact "chunked" is read). The
+            // map used to keep the last line only, so LOOK read the body as chunked once while a front-end
+            // that joins the lines refused it or framed it differently (request smuggling).
+            if (key == "transfer-encoding") {
+                auto ex = req.headers.find("transfer-encoding");
+                if (ex != req.headers.end()) { ex->second += ", " + val; pos = end + 2; continue; }
+            }
             req.headers[key] = val;
         }
         pos = end + 2;
     }
+
+    // RFC 9112 §6.1: an HTTP/1.0 message with Transfer-Encoding has faulty framing. LOOK decoded it as
+    // chunked while Go ignores the header and reads no body — two readers, two framings. Refused.
+    if (req.version == "HTTP/1.0" && req.headers.count("transfer-encoding")) return false;
 
     // WebSocket upgrade
     auto it_up  = req.headers.find("upgrade");

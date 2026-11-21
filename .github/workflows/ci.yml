@@ -608,6 +608,13 @@ jobs:
           cd cpp
           bash tests/decimal_string_arith_test.sh build/lk
 
+      # Request smuggling through Transfer-Encoding: two TE lines and an HTTP/1.0 request with TE are
+      # refused, and nothing behind a refused request is answered (pool and fiber dispatch).
+      - name: Transfer-Encoding smuggling shapes are refused
+        run: |
+          cd cpp
+          bash tests/te_smuggling_test.sh build/lk-fcgi
+
       # mail::send with SMTP_TLS=none sends a login only to a loopback server; a login to any
       # other server is refused before anything is sent (it went in clear text with a warning).
       - name: mail::send over SMTP keeps TLS and the login safe
