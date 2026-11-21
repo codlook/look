@@ -19,6 +19,9 @@
 #include <cassert>
 #include <cerrno>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -275,17 +278,70 @@ void fiber_trampoline(uint32_t hi, uint32_t lo) noexcept {
 // the one that opened it). Measurement (160k WS storm, 16 cores): without cache 15k connections/s;
 // cap 256 → 40k; 1024 → 53k; 4096 → 86k; 16384 → 95k.
 // Memory: the cache allocates no new memory; it holds the stacks left behind by fibers that ran at the same time
-// (as many as peak concurrency, at most 4096). At most KEEP of each stack stays touched.
+// (as many as peak concurrency, at most 4096). At most KEEP of each stack stays touched ("warm").
+// That memory is given back (madvise; the stack itself stays cached, guard page in place, and is reused cold):
+//   * when idle: every PERIOD the stacks not taken during the whole period (the bottom of the LIFO, below the
+//     period's low-water mark) are given back — after a storm, memory falls back within two periods even under
+//     light traffic (measured: 1000 connections left 20 MB held for good; Go's scavenger does the same);
+//   * under the memory budget (look/mem_budget.h): a warm stack is kept only while counted heap + the cache's
+//     upper bound (warm × KEEP) stays under 90% of the limit, and when heap growth crosses it every warm stack is
+//     given back at once — the cache never pushes the process past a container limit the budget stays under.
 namespace {
 struct StackCache {
     static constexpr size_t MAX = 4096;
+    static constexpr auto PERIOD = std::chrono::seconds(5);
+    struct Entry { void* p; size_t n; bool warm; };
     std::mutex m;
-    std::vector<std::pair<void*, size_t>> free_;   // (base, total size)
+    std::condition_variable cv;
+    std::vector<Entry> free_;      // LIFO: the back is the most recently returned
+    size_t warm_ = 0;              // entries that may hold up to KEEP touched
+    size_t low_ = 0;               // fewest entries during the current period: [0, low_) were never taken
+    std::atomic<bool> pressure_{false};
+    std::once_flag started_;
+    StackCache() { free_.reserve(MAX); }   // give() never allocates under the lock
+    void publish_held() { mem_held_set((int64_t)(warm_ * KEEP)); }
     void* take(size_t n) {
         std::lock_guard<std::mutex> lk(m);
         for (size_t i = free_.size(); i-- > 0;)
-            if (free_[i].second == n) { void* p = free_[i].first; free_[i] = free_.back(); free_.pop_back(); return p; }
+            if (free_[i].n == n) {
+                void* p = free_[i].p;
+                if (free_[i].warm) { --warm_; publish_held(); }
+                free_[i] = free_.back(); free_.pop_back();
+                if (free_.size() < low_) low_ = free_.size();
+                return p;
+            }
         return nullptr;
+    }
+    // Gives back the touched pages of the warm entries in [0, upto). Under the lock: an entry being
+    // trimmed cannot be taken by a fiber that would then write to it.
+    void trim_locked(size_t upto) {
+        const size_t page = (size_t)::getpagesize();
+        const size_t guard = (Fiber::GUARD_SIZE + page - 1) / page * page;
+        for (size_t i = 0; i < upto && i < free_.size(); ++i) {
+            Entry& e = free_[i];
+            if (!e.warm) continue;
+            ::madvise(static_cast<char*>(e.p) + guard, e.n - guard, MADV_DONTNEED);
+            e.warm = false; --warm_;
+        }
+        publish_held();
+    }
+    // Called from the allocation path (mem_budget.h): no allocation, no lock, no throw.
+    static void on_pressure() noexcept;
+    void run() {
+        std::unique_lock<std::mutex> lk(m);
+        for (;;) {
+            if (warm_ == 0) cv.wait(lk, [&] { return warm_ > 0 || pressure_.load(); });
+            low_ = free_.size();
+            cv.wait_for(lk, PERIOD, [&] { return pressure_.load(); });
+            if (pressure_.exchange(false)) trim_locked(free_.size());
+            else trim_locked(low_);
+        }
+    }
+    void start() {
+        std::call_once(started_, [this] {
+            mem_set_release_hook(&StackCache::on_pressure);
+            std::thread([this] { run(); }).detach();
+        });
     }
     // KEEP: from the top of the stack (high address; the stack grows downward) this much may stay touched
     // in the cache, the part below is returned with madvise: the megabytes of a fiber that did deep recursion
@@ -311,19 +367,37 @@ struct StackCache {
             std::lock_guard<std::mutex> lk(m);
             if (free_.size() >= MAX) return false;
         }
+        start();
         const size_t page = (size_t)::getpagesize();
         const size_t guard = (Fiber::GUARD_SIZE + page - 1) / page * page;
         char* top = static_cast<char*>(p) + n;
-        if (n > guard + KEEP + BAND && went_deep(top))
+        // Over the budget's room the stack is kept cold: its touched pages are given back now.
+        const bool warm = mem_can_hold((int64_t)KEEP);
+        if (!warm) ::madvise(static_cast<char*>(p) + guard, n - guard, MADV_DONTNEED);
+        else if (n > guard + KEEP + BAND && went_deep(top))
             ::madvise(static_cast<char*>(p) + guard, n - guard - KEEP, MADV_DONTNEED);
-        std::lock_guard<std::mutex> lk(m);
-        if (free_.size() >= MAX) return false;
-        free_.emplace_back(p, n);
+        bool wake;
+        {
+            std::lock_guard<std::mutex> lk(m);
+            if (free_.size() >= MAX) return false;
+            free_.push_back({p, n, warm});
+            wake = warm && warm_++ == 0;
+            if (warm) publish_held();
+        }
+        if (wake) cv.notify_one();
         return true;
     }
 };
 // Lives for the whole process lifetime (leaked singleton): no destructor-order problem at exit.
 StackCache& stack_cache() { static StackCache* c = new StackCache(); return *c; }
+void StackCache::on_pressure() noexcept {
+    StackCache& c = stack_cache();
+    if (c.pressure_.exchange(true)) return;
+    // Empty critical section: the trimmer either saw the flag or is already waiting, so the notify is not lost.
+    // Taking the lock here cannot deadlock: nothing allocates while holding it (free_ is reserved up front).
+    { std::lock_guard<std::mutex> lk(c.m); }
+    c.cv.notify_one();
+}
 }
 
 // ── Fiber construction ────────────────────────────────────────────────────────

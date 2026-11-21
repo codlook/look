@@ -953,6 +953,15 @@ jobs:
           cd cpp
           bash tests/ws_capacity_guard_test.sh ./build/lk-fcgi
 
+      # The stacks of finished connections are kept for reuse; their memory stayed held for good after
+      # a storm (20 MB after 1,000 connections, up to 384 MiB), unseen by the memory budget — with a
+      # container limit the kernel killed the server (measured: 160 MiB container, exit 137).
+      - name: Fiber stack cache gives its memory back (idle, and at once under the memory budget)
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          bash tests/fiber_stack_cache_trim_test.sh ./build/lk-fcgi
+
       # The messages of one WebSocket ran on different pool threads at the same time and could
       # finish out of order; the close callback was skipped when a send to a departed client failed.
       - name: WebSocket messages handled in order; close callback after them

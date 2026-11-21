@@ -254,8 +254,17 @@ fastest run, milliseconds):
   1,358 ms (both back to the 1.0 figures), `fn_call` 1,328 → 1,228, `int_arith` 775 → 736, `loop`
   3,298 → 3,137. The rest (about 60 instructions per call inside the dispatch loop) is still open.
 - **Memory at 1,000 connections:** LOOK's RSS was 4.4 MB on trivial JSON and 25 MB on the database
-  test on 2026-11-05; it is 23.6 MB and 52 MB now. Still the smallest or close to it, but five times
-  the earlier JSON figure. Not yet explained.
+  test on 2026-11-05; it is 23.6 MB and 52 MB now. **Cause found, fixed on the development line (not
+  in 1.1.4).** The peak during the load did not change (about 21 MB on trivial JSON in both builds);
+  what changed is that the memory was no longer given back after it. Since 2026-11-05 the stacks of
+  finished connections are kept for reuse (accepting connections got 5× faster), and their touched
+  pages stayed held: 1,007 stacks of ~12 KB each after a c=1000 run. Built from the same source with
+  the cache off, RSS after the run was 4.3–4.8 MB, the earlier figure. The cache now gives that
+  memory back: after 5–10 s without use (RSS after c=1000 21.1 MB → 9.2 MB 12 s later), and at once
+  when the memory budget needs it (in a 160 MiB container a storm of 1,500 connections followed by a
+  request holding 60 MiB: the old build was killed by the kernel, exit 137; the new one answered and
+  peaked at 71 MB). Accepting connections is as fast as before (20,855–23,639/s, old 20,953–21,453/s).
+  The database figure was not re-measured; the same mechanism is the likely cause.
 
 ## Results — 2026-11-05 (tests 8 and 12, six runtimes)
 

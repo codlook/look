@@ -56,14 +56,23 @@ inline void acct_flush() noexcept {
     t_acct_delta = 0;
 }
 
+// Memory held outside the heap (fiber stack cache, upper bound) and the holder's release hook (mem_budget.h).
+std::atomic<int64_t>        g_held{0};
+std::atomic<MemReleaseHook> g_release{nullptr};
+
 inline void on_alloc_sz(int64_t sz) noexcept {
     if ((t_acct_delta += sz) >= kAcctFlush) acct_flush();
     if ((t_delta += sz) >= kFlush) {
         const int64_t now = g_bytes.fetch_add(t_delta, std::memory_order_relaxed) + t_delta;
         t_delta = 0;
-        if (now > g_limit && g_enabled.load(std::memory_order_relaxed)) {
-            g_over.store(true, std::memory_order_relaxed);
-            t_preempt_budget = 0;   // let the next safe point check
+        if (g_enabled.load(std::memory_order_relaxed)) {
+            if (now > g_limit) {
+                g_over.store(true, std::memory_order_relaxed);
+                t_preempt_budget = 0;   // let the next safe point check
+            }
+            const int64_t held = g_held.load(std::memory_order_relaxed);
+            if (held > 0 && now + held > g_admit)
+                if (MemReleaseHook h = g_release.load(std::memory_order_acquire)) h();
         }
     }
 }
@@ -213,6 +222,13 @@ int64_t mem_process_bytes()  { return g_bytes.load(std::memory_order_relaxed) + 
 bool mem_admit() {
     return !mem_budget_enabled() || mem_process_bytes() < g_admit;
 }
+
+void mem_held_set(int64_t bytes) noexcept { g_held.store(bytes, std::memory_order_relaxed); }
+bool mem_can_hold(int64_t more) noexcept {
+    return !mem_budget_enabled() ||
+           mem_process_bytes() + g_held.load(std::memory_order_relaxed) + more <= g_admit;
+}
+void mem_set_release_hook(MemReleaseHook fn) noexcept { g_release.store(fn, std::memory_order_release); }
 
 MemAccount* mem_current_account() noexcept { return t_acct; }
 void        mem_set_current_account(MemAccount* a) noexcept { acct_flush(); t_acct = a; }   // delta goes to the old account

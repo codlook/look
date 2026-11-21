@@ -86,6 +86,21 @@ void mem_reserve(int64_t bytes, const char* what);
 MemAccount* mem_current_account() noexcept;
 void        mem_set_current_account(MemAccount* a) noexcept;
 
+// Memory the process holds outside the counted heap and can give back at any moment: the fiber stack cache
+// (stacks of finished connections kept for reuse). Without this the budget did not see it: after a storm of
+// 4096 connections the cache could hold up to 384 MiB that no request used, and counted heap + that memory
+// could pass a container limit the budget itself stayed under (the kernel kills the process without a word).
+//   * The holder reports an upper bound of what it holds (mem_held_set).
+//   * It may keep more only while counted heap + held + more stays under the admit threshold (90% of the
+//     limit, mem_can_hold); otherwise it gives the memory back at once instead of keeping it.
+//   * When heap growth pushes counted heap + held over that threshold, the release hook is called. It runs on
+//     the allocation path: it must not allocate, lock or throw — it only wakes the holder, which gives back.
+// Held memory never refuses a request (no 503, no stop): it yields to the heap.
+using MemReleaseHook = void (*)() noexcept;
+void mem_held_set(int64_t bytes) noexcept;
+bool mem_can_hold(int64_t more) noexcept;
+void mem_set_release_hook(MemReleaseHook fn) noexcept;
+
 std::string mem_format_bytes(int64_t b);   // "256 MiB"
 
 } // namespace look

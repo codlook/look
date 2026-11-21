@@ -75,6 +75,8 @@ jobs:
           LOOK_TEST_PREEMPT=1 bash tests/fiber_request_isolation_test.sh ./build-asan/lk-fcgi
           bash tests/cpu_turn_test.sh ./build-asan/lk-fcgi
           bash tests/shared_map_concurrent_test.sh ./build-asan/lk-fcgi
+          # stacks given back (madvise) and reused cold by the next connection
+          LOOK_TEST_NO_TIMING=1 bash tests/fiber_stack_cache_trim_test.sh ./build-asan/lk-fcgi
           ./build-asan/lk tests/assoc_index_test.lk | grep -q 'all checks passed'
       # MySQL and PostgreSQL clients against a hostile server: mutated replies (cut, flipped,
       # repeated packets, broken lengths, extra result sets, errors between rows) through the real
@@ -128,6 +130,9 @@ jobs:
           echo "== memory_budget_test"
           LOOK_TEST_NO_TIMING=1 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7940 "$PWD/build-tsan/lk" || fail=1
           LOOK_TEST_NO_TIMING=1 LOOK_FIBER_DISPATCH=0 bash tests/memory_budget_test.sh /tmp/w/lk-fcgi 7950 "$PWD/build-tsan/lk" || fail=1
+          # the stack cache's give-back thread trims stacks that fibers on other threads take and return
+          echo "== fiber_stack_cache_trim_test"
+          LOOK_TEST_NO_TIMING=1 bash tests/fiber_stack_cache_trim_test.sh /tmp/w/lk-fcgi || fail=1
           # the monitor thread reads every worker's scheduler and spawns on an idle one; no timing under TSan
           echo "== stuck_worker_test"
           LOOK_TEST_NO_TIMING=1 bash tests/stuck_worker_test.sh /tmp/w/lk-fcgi 7690 || fail=1

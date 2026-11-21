@@ -207,7 +207,7 @@
       </tbody>
     </table>
     </div>
-    <p>LOOK 1.1.4 serves <b>88–89% of Go</b> and is <b>ahead of Node</b> at both concurrencies, with the <b>lowest p99 of the six</b> — 1.5 ms at c=100 and 13.6 ms at c=1000, where Node's tail reaches 1.06 s. Against LOOK 1.0.52 that is <b>6.5×</b> the requests. One number moved the wrong way: LOOK's memory at 1,000 connections is <b>23.6 MB</b>, against 4.4 MB on the development build two weeks earlier — still the smallest of the six, and being investigated.</p>
+    <p>LOOK 1.1.4 serves <b>88–89% of Go</b> and is <b>ahead of Node</b> at both concurrencies, with the <b>lowest p99 of the six</b> — 1.5 ms at c=100 and 13.6 ms at c=1000, where Node's tail reaches 1.06 s. Against LOOK 1.0.52 that is <b>6.5×</b> the requests. One number moved the wrong way: LOOK's memory at 1,000 connections is <b>23.6 MB</b>, against 4.4 MB on the development build two weeks earlier — still the smallest of the six. The cause is found: the peak during the load is the same, but the stacks of finished connections, kept for reuse since that build, held their memory after it. On the development line (not in 1.1.4) the cache gives it back after a few idle seconds, and at once when the memory budget needs it.</p>
   </section>
 
   <!-- WORKLOAD 2 -->
