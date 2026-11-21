@@ -11,7 +11,8 @@
 # three times. And a retry after a real failure came immediately, which helps nothing when the
 # cause is a mail server that did not answer for a moment.
 # The wait doubles with every try: base, 2 x base, 4 x base (base: LOOK_JOBS_RETRY_SECONDS,
-# 30 by default; 1 here).
+# 30 by default; 3 here: the two passes in a row must both come before the first retry is due, also
+# on a loaded machine — with 1 s a slow pair of passes ran a retry early and the test went red).
 # Usage: job_handler_result_test.sh <lk-fcgi>
 FCGI="$(cd "$(dirname "${1:?usage: $0 <lk-fcgi>}")" && pwd)/$(basename "$1")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null' EXIT
@@ -40,13 +41,13 @@ route("GET", "/r", function() {
 LK
 fail=0
 rm -f "$TMP"/jobs.db*
-( cd "$TMP" && exec env LOOK_JOBS_RETRY_SECONDS=1 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
+( cd "$TMP" && exec env LOOK_JOBS_RETRY_SECONDS=3 "$FCGI" --mode http --port "$PORT" --workers 2 app.lk > "$TMP/log.txt" 2>&1 ) & pid=$!
 for i in $(seq 1 40); do curl -s -o /dev/null -m 1 "localhost:$PORT/r" && break; sleep 0.1; done
 curl -s -m 5 "localhost:$PORT/push" >/dev/null
 curl -s -m 20 "localhost:$PORT/drain" >/dev/null; curl -s -m 20 "localhost:$PORT/drain" >/dev/null
 first="$(curl -s -m 5 "localhost:$PORT/r")"                 # two passes in a row: one run each
-for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.6; curl -s -m 20 "localhost:$PORT/drain" >/dev/null; done
-last="$(curl -s -m 5 "localhost:$PORT/r")"                  # after the waits (1 s, then 2 s)
+for i in $(seq 20); do sleep 0.6; curl -s -m 20 "localhost:$PORT/drain" >/dev/null; done
+last="$(curl -s -m 5 "localhost:$PORT/r")"                  # after the waits (3 s, then 6 s)
 said1="$(grep -c "handler for queue 'noreturn' must return true (done) or false.*it returned nothing (null)" "$TMP/log.txt")"
 said2="$(grep -c "handler for queue 'text' must return true (done) or false.*it returned a string" "$TMP/log.txt")"
 boom="$(grep -c 'smtp down' "$TMP/log.txt")"
