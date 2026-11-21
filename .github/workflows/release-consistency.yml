@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Depo: belgelerde adı geçen ikilileri okuyan guard (cpp/tests/package_binaries_guard.sh) için.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Asset'leri indir
         env:
           GH_TOKEN: ${{ github.token }}

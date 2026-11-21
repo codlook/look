@@ -18,7 +18,7 @@ jobs:
   msvc-gate:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # look-cgi da: Windows paketinde lk-cgi.exe var (build.ps1); eskiden CI derlemediği için
       # MSVC'de bağlanmadığı ancak yayın derlemesinde görüldü (shutdown.cpp eksikti).
@@ -57,7 +57,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           & platforms/windows/build.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-package
           path: platforms/windows/look-lang-windows-*.zip

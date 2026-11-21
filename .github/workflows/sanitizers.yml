@@ -11,7 +11,7 @@ jobs:
   asan-ubsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (ASan+UBSan)
         working-directory: cpp
@@ -64,7 +64,7 @@ jobs:
   tsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
       - name: Build (TSan)
         working-directory: cpp
@@ -91,7 +91,7 @@ jobs:
     # nightly/manuel. Hedefler saf ayristiricilar (look/*_parse.h) — socket'siz.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y clang
       - name: Fuzz — PG + MySQL + HTTP istek/wire parser (kisa, yesil olmali)
         working-directory: cpp/tests/fuzz

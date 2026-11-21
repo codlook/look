@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -1076,7 +1076,7 @@ jobs:
           --health-cmd="pg_isready -U lookci -d lookci"
           --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -1181,7 +1181,7 @@ jobs:
     name: "PG TLS gerçek-sunucu interop (SSLRequest→TLS→startup→SCRAM)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build + postgres + openssl
         run: |
           sudo apt-get update -qq
@@ -1210,7 +1210,7 @@ jobs:
     name: "Eşzamanlılık hang smoke (pool + fiber, c=50)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq

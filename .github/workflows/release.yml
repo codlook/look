@@ -44,7 +44,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Damga 7 hane: Linux ikilileriyle aynı (tutarlılık adımı Windows .exe içinde bu damgayı arar).
       - name: MSVC Release build (lk, lk-fcgi, lk-cgi)
         shell: pwsh
@@ -63,7 +63,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           & platforms/windows/build.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-package
           path: platforms/windows/look-lang-windows-*.zip
@@ -78,7 +78,7 @@ jobs:
       DOCKERHUB_USERNAME: codlook   # public namespace — sabit; sadece TOKEN secret
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 0) Sürüm — tek kaynak CMakeLists. Etiket v<sürüm> ya da v<sürüm>-rc<N> olmalı:
       # yanlış numarayla etiketlenmiş bir yayın, başka sürümün dosya adlarını taşırdı.
@@ -163,7 +163,7 @@ jobs:
           docker save "codlook/look:$VERSION" | gzip > look-docker.tar.gz
 
       # 5b) Windows paketi — `windows` işinin ürettiği (aynı commit, aynı damga).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-package
           path: winpkg

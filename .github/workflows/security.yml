@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 20   # güvenlik ağı: ASan HTTP smoke'ta --max-time'sız curl bir deadlock'ta asılırsa erken kes
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # güvenlik ağı: hang olursa 6-saat GitHub varsayılanı yerine erken kes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install deps
         run: |
           sudo apt-get update -qq
