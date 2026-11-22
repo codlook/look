@@ -51,7 +51,7 @@ static std::string read_file(const fs::path& path) {
 }
 
 // assert:: module — uses TestAssertionError to signal failure. `call` runs a LOOK function value
-// (LOOK 2: on the VM that is running the test — vm_bridge_invoke).
+// (on the VM that is running the test — vm_bridge_invoke).
 using CallFn = std::function<void(const Value&)>;
 static Module make_assert_module(CallFn call) {
     Module m;

@@ -440,7 +440,7 @@ static void publish_http_snapshot() {
     g_http_app.snap = std::move(s);
 }
 
-// LOOK 2: the closure to call if this thread is running a timer callback.
+// The closure to call if this thread is running a timer callback.
 // When look_app_dispatch sees this it does not match routes, it calls the closure directly in the request VM.
 // Inside a fiber it is FIBER-specific (FiberLocal::http_direct): so that when the handler is suspended in a query
 // another fiber on the same thread does not overwrite it. Outside a fiber it is thread-specific.
@@ -480,8 +480,8 @@ static look::Value run_closure_as_request(const look::Value& fnv, std::vector<lo
 // thanks to the "if an error occurs re-run the same request in the interpreter" net; that net was removed because it ran the
 // handler TWICE. The decision is now made BEFORE running, at setup:
 // the route's proto, its inner protos and the global functions it calls by name (transitively) are scanned;
-// if a "mod::fn" name with no counterpart in the VM globals is loaded the app does not start (LOOK 2;
-// in 1.0.8 the route was pinned to the interpreter from the start). A dynamic call through a variable
+// if a "mod::fn" name with no counterpart in the VM globals is loaded the app does not start (in 1.0.8
+// the route was pinned to the interpreter from the start). A dynamic call through a variable
 // cannot be seen: in that case the request gets a 500.
 // Pure (non-request) bare built-ins: bool, string, strlen, abs, max, min, sqrt, strtoupper,
 // strtolower, join.
@@ -639,7 +639,7 @@ static void startup_note(const std::string& stderr_line, const std::string& log_
     if (!log_line.empty()) look::Logger::instance().log(look::LogLevel::LOG_INFO, "HTTP", log_line);
 }
 
-// LOOK 2 single engine: if the program cannot be compiled the app DOES NOT START (previously the whole app silently
+// Single engine: if the program cannot be compiled the app DOES NOT START (previously the whole app silently
 // fell to a ~40x slower interpreter; LOOK_VM_STRICT was only a way to reject this — now
 // this is the only behavior). A compile error is the program's error (missing file, unknown module, limit
 // exceeded) — the message is passed on as it is; the "the VM cannot run it" framing blamed the engine.
@@ -685,7 +685,7 @@ static void run_setup_http(const fs::path& script) {
     setup_ctx        = look::WebContext{};
     setup_ctx.method = "__SETUP__";
 
-    // LOOK 2 single engine: top-level code (setup) runs ONLY in the VM, once. This object does NOT RUN
+    // Single engine: top-level code (setup) runs ONLY in the VM, once. This object does NOT RUN
     // LOOK code — it is only the store of the built-in modules (ModuleHost): module functions are taken
     // from it, web modules are bound to the setup context (setup_ctx), it carries the setup-mode flag.
     // (Previously top level ran here first in the interpreter, then the VM replayed the same code from the
@@ -698,7 +698,7 @@ static void run_setup_http(const fs::path& script) {
     g_http_app.interp      = std::move(interp);
     g_http_app.script_path = script;
 
-    // ── Bytecode compile — LOOK 2: single engine, no fallback ───────────────────────
+    // ── Bytecode compile — single engine, no fallback ───────────────────────
     // LOOK_BYTECODE=0 used to run the whole app in the interpreter; it no longer has any meaning.
     {
         static bool warned = false;
@@ -763,7 +763,7 @@ static void run_setup_http(const fs::path& script) {
                 if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                     return look::Value();
                 look::value_push_not_map(args[0], "push()");
-                args[0].detach();   // LOOK 2: do not modify the shared store in place (the variable path comes via PUSH_PATH)
+                args[0].detach();   // do not modify the shared store in place (the variable path comes via PUSH_PATH)
                 args[0].as_array()->push_back(args[1]);
                 return look::Value();
             };
@@ -930,7 +930,7 @@ static void run_setup_http(const fs::path& script) {
                 };
             }
 
-            // ── Remaining built-ins: REAL module functions (LOOK 2: setup is a SINGLE pass) ─────────
+            // ── Remaining built-ins: REAL module functions (setup is a SINGLE pass) ─────────
             // Top level runs only here, in the VM, once: the side effects of module functions
             // (db::exec, file::put, cache::set, http::get ...) happen once, their returns are real.
             // Previously the interpreter pass ran them and the VM pass replayed the results from the
@@ -1049,7 +1049,7 @@ static void run_setup_http(const fs::path& script) {
                     : "CSRF protection: off (the program does not use cookies)");
             }
 
-            // LOOK 2: all files are loaded, all structs are known -> check the field type names NOW.
+            // All files are loaded, all structs are known -> check the field type names NOW.
             // A typo (`strng`) gives an error when the app STARTS; otherwise it would only show up in production
             // when the route that builds that struct (perhaps rarely called) runs. The definitions
             // are held in the VM globals under "__sdef:<name>" as [field, default, type] triples.
@@ -1071,7 +1071,7 @@ static void run_setup_http(const fs::path& script) {
             g_http_app.interp->set_route_count((int)g_http_app.vm_routes.size());
             if (!g_http_app.vm_routes.empty()) {
                 g_http_app.vm_routes_ready = true;
-                // LOOK 2 (single engine): if a route or before_route reaches a module function that DOES NOT EXIST
+                // Single engine: if a route or before_route reaches a module function that DOES NOT EXIST
                 // the app DOES NOT START. Every module function exists in the VM (`lk --vm-report`, the CI
                 // gate); a `mod::fn` name the VM does not recognize is a typo. Previously such a route
                 // was silently moved to the interpreter and the error only appeared when the first request hit that route.
@@ -1220,7 +1220,7 @@ static look::WebContext make_web_ctx(const look::HttpRequest& req) {
 void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
                        const std::string& prof_path);
 
-// LOOK 2 — runs a VM closure LIKE A NEW REQUEST: its own VM, its own builtins,
+// Runs a VM closure LIKE A NEW REQUEST: its own VM, its own builtins,
 // the declared values of the globals (for timers and job handlers registered at top level).
 // The error is logged (what + " error: ..."), ok=false is returned; nothing is re-run.
 static look::Value run_closure_here(const look::Value& fnv, std::vector<look::Value>& args,
@@ -1568,7 +1568,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // returned empty). The name-based resolution closes this class of sync gaps.
         auto BI = [](const char* n) { return (size_t)look::builtin_index(n); };
 
-        // timer::after / timer::every / timer::cancel — LOOK 2.
+        // timer::after / timer::every / timer::cancel.
         // The callback runs AFTER the request, on the timer thread. There it is set up like a new request
         // (look_app_dispatch + direct().closure): its own VM, its own builtins,
         // a clean copy of the setup globals. So what a callback writes to a global reaches neither
@@ -1611,12 +1611,12 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             req_builtins[BI("timer::wait")] = [](std::vector<look::Value>&) -> look::Value {
                 throw std::runtime_error("timer::wait() can be used only on the command line: a web request does not wait for timers");
             };
-            // jobs::run — LOOK 2: SINGLE definition (RuntimeHost::jobs_run). The handler (BYTECODE_FN)
+            // jobs::run — SINGLE definition (RuntimeHost::jobs_run). The handler (BYTECODE_FN)
             // runs in its own VM like a new request via vm_closure_runner.
             req_builtins[BI("jobs::run")] = [copy](std::vector<look::Value>& args) -> look::Value {
                 return copy->jobs_run(args.empty() ? 5000 : (int)args[0].to_float());
             };
-            // ws:: / sse:: — LOOK 2: operations on the connection handle (those that take no callback).
+            // ws:: / sse:: — operations on the connection handle (those that take no callback).
             // The checks and error texts are the same as the old inline definitions in the interpreter.
             auto ws_of = [](const look::Value& v, const char* what) {
                 if (v.type() != look::Value::WEBSOCKET || !v.as_websocket())
@@ -1824,7 +1824,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             if (args.size() < 2 || args[0].type() != look::Value::ARRAY)
                 throw std::runtime_error("push() requires array and value");
             look::value_push_not_map(args[0], "push()");
-            args[0].detach();   // LOOK 2: do not modify the shared store in place (the variable path comes via PUSH_PATH)
+            args[0].detach();   // do not modify the shared store in place (the variable path comes via PUSH_PATH)
             args[0].as_array()->push_back(args[1]);
             return args[0];
         };
@@ -1873,11 +1873,11 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // are shared); if the request writes to one, the write path takes its own copy first.
             vm.set_globals(snap->vm_setup_globals);
             vm.set_web_context(&web);
-            // LOOK 2: the connection handler (WS/SSE route) is in the VM — the connection goes to the handler as the first argument.
+            // The connection handler (WS/SSE route) is in the VM — the connection goes to the handler as the first argument.
             if (direct().conn.type() == look::Value::WEBSOCKET) vm.set_ws_connection(direct().conn.as_websocket());
             else if (direct().conn.type() == look::Value::SSE_CONN) vm.set_sse_connection(direct().conn.as_sse());
 
-            // LOOK 2 — timer callback: no route matching and no before_route; the closure
+            // Timer callback: no route matching and no before_route; the closure
             // is called directly in this VM set up like a new request (clean setup values, its own builtins).
             // The error falls to the common catcher below (log + no re-run).
             if (direct().closure) {
@@ -1952,7 +1952,7 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
             // The output written up to that point becomes the response.
             vm_ok = true;
         } catch (const std::exception& vm_e) {
-            // Runtime error: 500 + log. LOOK 2: there is no interpreter — no route pinning either.
+            // Runtime error: 500 + log. There is no interpreter — no route pinning either.
             //
             // History — C9: previously on the first error the route was permanently pinned to the interpreter.
             // This safety net MASKED BUGS for years — since the route silently dropped to the slow path and returned the CORRECT result
@@ -1998,8 +1998,8 @@ void look_app_dispatch(look::WebContext& web, std::ostringstream& output,
         // after pool_size requests.
         if (!nested) look::release_thread_connections();
     } else {
-        // The application could not be loaded (hot reload failed: the VM could not compile/set up). LOOK 2:
-        // no interpreter fallback — the request gets an explicit 500; the next load recovers once the file is fixed.
+        // The application could not be loaded (hot reload failed: the VM could not compile/set up).
+        // No interpreter fallback — the request gets an explicit 500; the next load recovers once the file is fixed.
         t_dispatch_start = std::chrono::steady_clock::now();
         web.status_code = 500;
         web.status_text = "Internal Server Error";
@@ -2133,7 +2133,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         // CSWSH (another site opening a WS with the visitor's cookie) is rejected BEFORE the handshake in http_server.cpp
         // (handle_ws_upgrade): same origin by default, the LOOK_WS_ORIGINS allow list.
 
-        // LOOK 2: the connection handler is dispatched in the VM like an ordinary request.
+        // The connection handler is dispatched in the VM like an ordinary request.
         // The connection is carried with direct().conn and given to the handler as the first argument.
         std::ostringstream sink;
         direct().conn = look::Value(conn);
@@ -2163,7 +2163,7 @@ void run_http_mode(int port, int workers, const std::string& script_path_str) {
         if (auto ck = req.headers.find("cookie"); ck != req.headers.end())
             web.cookies_in = look::WebContext::parse_cookies(ck->second);
 
-        // LOOK 2: the connection handler is dispatched in the VM like an ordinary request.
+        // The connection handler is dispatched in the VM like an ordinary request.
         // The connection is carried with direct().conn and given to the handler as the first argument.
         std::ostringstream sink;
         direct().conn = look::Value(conn);

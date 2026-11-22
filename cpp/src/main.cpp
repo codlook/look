@@ -197,7 +197,7 @@ bool find_undefined_call(const Program& prog, std::string& name, int& line, int&
     for (auto& s : prog.statements) walk_stmt(s.get(), visit);
     return found;
 }
-// LOOK 2: the process ends when the script ends (Go/Rust model: the top level determines the program's lifetime, waiting
+// The process ends when the script ends (Go/Rust model: the top level determines the program's lifetime, waiting
 // is written explicitly). Not silently: timers left set up and unfinished parallel() tasks are
 // reported, together with what to write in order to wait. (Previously parallel() tasks were implicitly waited for 5 s and
 // timers silently vanished — two separate rules; now a single rule.)
@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        // lk --vm-report : which module functions the VM does not provide. LOOK 2 runs only on the
+        // lk --vm-report : which module functions the VM does not provide. LOOK runs only on the
         // VM (web and command line), so a program that reaches one of them does not start; the
         // list has to be empty (CI).
         if (cmd == "--vm-report") {
@@ -468,12 +468,12 @@ int main(int argc, char* argv[]) {
                           << " Undefined function: " << bad << "\n";
                 return 1;
             }
-            // LOOK 2 transition check: places the closure-capture rule would break (a warning for now;
+            // Transition check: places the closure-capture rule would break (a warning for now;
             // exit code does not change, the editor extension only looks at the "CHECK" line).
             for (const auto& w : look::check_captures(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [" << w.kind << "] " << w.message << "\n";
-            // LOOK 2 transition check: a call to a named function with the wrong number of arguments (in 1.0.x the two
+            // Transition check: a call to a named function with the wrong number of arguments (in 1.0.x the two
             // engines diverged; counted before the rule is finalized).
             // push($l, $x) -> $l = array::push($l, $x); pop($l) / array::pop($l) -> $l[-1] +
             // $l = array::slice($l, 0, -1): a warning for one release (then an error). `lk fix` rewrites it.
@@ -485,7 +485,7 @@ int main(int argc, char* argv[]) {
             for (const auto& w : look::check_arg_counts(*program))
                 std::cout << "WARN " << (w.line > 0 ? w.line : 1) << " " << (w.column > 0 ? w.column : 1)
                           << " [arg-count] " << w.message << "\n";
-            // LOOK 2: a function that writes to a parameter without returning it — an ERROR here (for CI); a warning at load time.
+            // A function that writes to a parameter without returning it — an ERROR here (for CI); a warning at load time.
             {
                 bool bad_param = false;
                 for (const auto& w : parser.warnings()) {
@@ -496,7 +496,7 @@ int main(int argc, char* argv[]) {
                 }
                 if (bad_param) return 1;
             }
-            // Can the VM compile this file? In LOOK 2 a program that cannot be compiled does NOT RUN (command line and
+            // Can the VM compile this file? A program that cannot be compiled does NOT RUN (command line and
             // web) — said here by name, as an error. Nothing is run.
             // The base directory is given as on the web path: files included with `use "file.lk"` are compiled too.
             try {
@@ -539,7 +539,7 @@ int main(int argc, char* argv[]) {
         interpreter.set_file(filename);
 
         try {
-            // LOOK 2 single engine: the command line runs ONLY in the VM. Previously a compile error, a package
+            // Single engine: the command line runs ONLY in the VM. Previously a compile error, a package
             // module, timer::/jobs::worker or a mod::fn missing from the VM silently (and then with
             // a warning) dropped the script to a ~40x slower tree-walk; LOOK_CLI_VM=0 selected it.
             // Now: a program that cannot be compiled does NOT RUN (the reason is printed, exit 1); LOOK_CLI_VM=0 and

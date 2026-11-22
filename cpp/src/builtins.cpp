@@ -191,7 +191,7 @@ const std::vector<std::string>& builtin_names() {
         "db::driver",
         // date::mono_us — monotonic microsecond clock (benchmark timing). Appended at
         // end (no index shift). Without it the compiler treats it as an unknown module
-        // function (before LOOK 2 that sent the whole script to tree-walk).
+        // function (it used to send the whole script to tree-walk).
         "date::mono_us",
         // timer:: — a timer set up in a route runs in the VM (the callback runs, like a new
         // request, in its own VM and with clean setup values — http_main.cpp). It used to exist
