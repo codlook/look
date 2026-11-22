@@ -37,6 +37,11 @@ jobs:
           if ($v -notmatch [regex]::Escape($sha)) { throw "build stamp is wrong: [$v], expected $sha" }
           Write-Host $v
 
+      # The memory-safety protections are in the FINISHED binaries (random load address, Control Flow Guard, NX).
+      - name: Binaries carry their memory-safety protections
+        shell: pwsh
+        run: ./cpp/tests/windows_binary_hardening_check.ps1 cpp/build-win/Release/lk.exe cpp/build-win/Release/lk-fcgi.exe cpp/build-win/Release/lk-cgi.exe
+
       # The Windows-only branches (NCrypt rs256 · BCrypt random/sha256 · MSVC CRT date) run only on a REAL
       # MSVC binary. If any is red the job fails (no silent hole).
       - name: Pre-release gate (against the MSVC binary)

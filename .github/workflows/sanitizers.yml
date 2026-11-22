@@ -182,7 +182,7 @@ jobs:
                          [fuzz_http_request]=corpus_http )
           for h in "${!C[@]}"; do
             echo "== build $h =="
-            clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
+            clang++ -std=c++17 -g -O1 -D_GLIBCXX_ASSERTIONS -fsanitize=fuzzer,address,undefined \
                     -fno-sanitize-recover=all -I../../include "$h.cpp" -o "$h"
             echo "== run $h (30s) =="
             mkdir -p "${C[$h]}"
@@ -201,7 +201,7 @@ jobs:
         run: |
           sudo apt-get install -y libssl-dev
           python3 make_seeds.py .
-          S="-g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -I../../include -I../../src"
+          S="-g -O1 -D_GLIBCXX_ASSERTIONS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -I../../include -I../../src"
           clang -g -O1 -fsanitize=fuzzer-no-link,address,undefined -c ../../src/miniz/miniz.c -I../../src -o miniz.o
           clang++ -std=c++23 $S fuzz_gzip_inflate.cpp miniz.o -o fuzz_gzip_inflate
           clang++ -std=c++23 $S fuzz_ws_frame.cpp ../../src/websocket.cpp -lssl -lcrypto -o fuzz_ws_frame

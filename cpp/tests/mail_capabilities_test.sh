@@ -24,6 +24,13 @@ def check(ok, what, got=""):
     global bad
     if ok: print("  OK   " + what)
     else: bad += 1; print("  FAIL %s -- got: %s" % (what, str(got)[:110]))
+def smtp_done(d):
+    # An SMTP reply ends with a line "NNN text" (code and a space); "NNN-text" lines continue it.
+    # Waiting for the end line, not for a quiet moment: on a loaded machine a multi-line reply
+    # arrives in pieces more than 0.4 s apart and the quiet-moment rule read half a capability list.
+    if not d.endswith(b"\r\n"): return False
+    last = d.split(b"\r\n")[-2]
+    return len(last) >= 4 and last[:3].isdigit() and last[3:4] == b" "
 def rd(s, t=3.0, stop=None):
     s.settimeout(0.4); d = b""; end = time.time() + t
     while time.time() < end:
@@ -32,6 +39,7 @@ def rd(s, t=3.0, stop=None):
             if not x: break
             d += x
             if stop and stop in d: break
+            if not stop and smtp_done(d): break
         except (socket.timeout, ssl.SSLWantReadError):
             if d and not stop: break
         except Exception as e: d += ("(%s)" % type(e).__name__).encode(); break
@@ -163,7 +171,9 @@ else:
 if t:
     check("a3 OK" in one(t, b"a3 LOGIN u@localhost s123\r\n"), "[IMAP] LOGIN works on the session")
     check("a4 OK" in one(t, b"a4 SELECT INBOX\r\n"), "[IMAP] SELECT works on the session")
-    t.sendall(b"a5 FETCH 1 (BODY[HEADER])\r\n"); r = rd(t, 4, b"a5 ")
+    # All messages, not "message 1": the server lists them by file name (a time stamp), so which of the
+    # messages delivered within the same moment comes first is not defined — the old 0.4 s waits hid that.
+    t.sendall(b"a5 FETCH 1:* (BODY[HEADER])\r\n"); r = rd(t, 4, b"a5 ")
     check("Subject: EIGHT" in r and "a5 OK" in r, "[IMAP] FETCH returns the message delivered over SMTP", r[-80:])
     t.sendall(b"a6 IDLE\r\n"); r = rd(t, 3, b"+ ")
     check(r.startswith("+"), "[IMAP IDLE] the server enters idle", r)

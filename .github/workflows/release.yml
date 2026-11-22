@@ -57,6 +57,11 @@ jobs:
           $v = & cpp/build-win/Release/lk.exe --version
           if ($v -notmatch [regex]::Escape($sha)) { throw "build stamp is wrong: [$v], expected $sha" }
           Write-Host $v
+      # The shipped binaries carry their memory-safety protections (random load address, Control Flow Guard, NX):
+      # a missing one stops the release.
+      - name: Binaries carry their memory-safety protections
+        shell: pwsh
+        run: ./cpp/tests/windows_binary_hardening_check.ps1 cpp/build-win/Release/lk.exe cpp/build-win/Release/lk-fcgi.exe cpp/build-win/Release/lk-cgi.exe
       # build.ps1: the gate for the MSVC branches (crypto/rs256/date/release_gate) — if red, NO package.
       - name: Gate + package (platforms/windows/build.ps1)
         shell: pwsh

@@ -22,6 +22,10 @@ if(LOOK_SANITIZE)
         string(REPLACE "/GL" "" CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}")
     else()
         add_compile_options(-fsanitize=${LOOK_SANITIZE} -fno-omit-frame-pointer -g)
+        # An out-of-range index into a std::vector / std::string / std::array stops the program here, in CI, with a
+        # report — the release binary does not carry this check (+18.6% on the micro suite, +45-48% on loops, and one
+        # failed assertion would stop the whole server). The sanitizer and fuzz builds are where such bugs are found.
+        add_compile_options(-D_GLIBCXX_ASSERTIONS)
         # Link the sanitizer runtime statically — the binary is self-contained and also
         # runs in a container/VPS without the toolset installed (no libasan.so dependency).
         # TSan and ASan need different static-runtime flags (they cannot be mixed).
