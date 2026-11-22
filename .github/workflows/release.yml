@@ -258,6 +258,9 @@ jobs:
             P=$(_plesk/htdocs/bin/lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
             [ "$P" = "$REF" ] && echo "  OK   plesk  $P" || { echo "  FAIL plesk  $P != $REF"; fail=1; }
           else echo "  FAIL plesk: htdocs/bin/lk is MISSING — broken packaging"; fail=1; fi
+          # The shipped binaries carry their memory-safety protections (PIE, full RELRO, NX, canaries, fortify).
+          bash "$GITHUB_WORKSPACE/cpp/tests/binary_hardening_check.sh" \
+            _linux/bin/lk _linux/bin/lk-fcgi _plesk/htdocs/bin/lk _plesk/htdocs/bin/lk-fcgi || fail=1
           docker load < look-docker.tar.gz >/dev/null
           D=$(docker run --rm "codlook/look:$VERSION" lk --version | sed -n 's/.*(\([0-9a-f]\{7\}\),.*/\1/p')
           [ "$D" = "$REF" ] && echo "  OK   docker $D" || { echo "  FAIL docker $D != $REF"; fail=1; }

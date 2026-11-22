@@ -40,6 +40,12 @@ jobs:
           # release build caught it (a broken lk-cgi = the Plesk CGI path would have shipped). 3 targets = closed.
           cmake --build build --target look --target look-fcgi --target look-cgi --parallel $(nproc)
 
+      # The memory-safety protections are in the FINISHED binaries (PIE, full RELRO, non-executable stack,
+      # stack-protector checks, fortified libc calls). 1.1.5 shipped without most of them and no test noticed.
+      - name: Binaries carry their memory-safety protections
+        timeout-minutes: 5
+        run: bash cpp/tests/binary_hardening_check.sh cpp/build/lk cpp/build/lk-fcgi cpp/build/lk-cgi
+
       # Regression suite — the assertion file prints "OK/FAIL".
       # Any FAIL line breaks the job.
       - name: Regression suite

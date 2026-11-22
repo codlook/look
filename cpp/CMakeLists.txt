@@ -46,6 +46,42 @@ else()
             message(STATUS "LTO desteklenmiyor: ${_ipo_msg}")
         endif()
     endif()
+
+    # ── Memory-safety hardening (Linux, GCC / Clang) ────────────────────────────────
+    # A bug that corrupts memory should stop the process, not take it over. These cost almost
+    # nothing and need no setting (LOOK_HARDEN=OFF turns them off for a measurement):
+    #   -fstack-protector-strong     canary in every function with an array or a taken address
+    #   -fstack-clash-protection     a large stack frame cannot jump over the guard page
+    #   -fcf-protection=branch       x86: indirect branches land only on valid targets (CET IBT). Not
+    #                                =full: the shadow stack would meet the fibers' swapcontext
+    #   -D_FORTIFY_SOURCE=2          memcpy/strcpy/... with a known buffer size are checked at run time
+    #   PIE                          the binary itself is placed at a random address (ASLR)
+    #   -z relro -z now              the relocation table is read-only once the program starts
+    #   -z noexecstack               the stack is never executable
+    # Sanitizer builds are left alone (they carry their own checks; _FORTIFY_SOURCE conflicts with them).
+    option(LOOK_HARDEN "Memory-safety compiler and linker flags (Linux)" ON)
+    if(LOOK_HARDEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT MSVC)
+        include(CheckCXXCompilerFlag)
+        include(CheckPIESupported)
+        foreach(_f -fstack-protector-strong -fstack-clash-protection -fcf-protection=branch)
+            string(MAKE_C_IDENTIFIER "LOOK_HAS${_f}" _v)
+            check_cxx_compiler_flag(${_f} ${_v})
+            if(${_v})
+                add_compile_options(${_f})
+            endif()
+        endforeach()
+        if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+            add_compile_definitions(_FORTIFY_SOURCE=2)   # needs optimization: off in Debug
+        endif()
+        check_pie_supported(LANGUAGES CXX C OUTPUT_VARIABLE _pie_msg)
+        if(CMAKE_CXX_LINK_PIE_SUPPORTED)
+            set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        else()
+            message(STATUS "PIE not supported: ${_pie_msg}")
+        endif()
+        add_link_options(-Wl,-z,relro,-z,now,-z,noexecstack)
+        message(STATUS "Hardening flags enabled (LOOK_HARDEN)")
+    endif()
 endif()
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -220,6 +256,15 @@ if(WIN32)
         target_link_options(look      PRIVATE /STACK:8388608)
         target_link_options(look-cgi  PRIVATE /STACK:8388608)
         target_link_options(look-fcgi PRIVATE /STACK:8388608)
+        # Memory-safety protections on Windows (the counterpart of LOOK_HARDEN on Linux): Control Flow Guard
+        # (an indirect call lands only on a valid function), a randomised load address, and the full 64-bit
+        # randomisation range. Release builds only: /guard:cf does not go with the Debug edit-and-continue.
+        if(LOOK_HARDEN)
+            foreach(_t look look-cgi look-fcgi)
+                target_compile_options(${_t} PRIVATE $<$<NOT:$<CONFIG:Debug>>:/guard:cf>)
+                target_link_options(${_t} PRIVATE $<$<NOT:$<CONFIG:Debug>>:/GUARD:CF> /DYNAMICBASE /HIGHENTROPYVA)
+            endforeach()
+        endif()
     endif()
     set_target_properties(look      PROPERTIES OUTPUT_NAME "lk")
     set_target_properties(look-cgi  PROPERTIES OUTPUT_NAME "lk-cgi")
