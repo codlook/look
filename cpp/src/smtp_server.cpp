@@ -1269,8 +1269,18 @@ struct SmtpServer::Impl {
             else on_data(fd, sess, plain.data(), plain.size());   // lines take the same path as plaintext
         };
         if (out.empty()) { next(); return; }
-        loop->async_write(fd, std::move(out), [this, fd, next](bool ok) {
+        // The loop keeps reading the socket until it is empty and hands every piece to this callback. A client
+        // that sends its Finished and its first command in one go (the second piece is already waiting when the
+        // handshake output is queued) would get that command processed — and its reply queued with
+        // async_write — BEFORE this write is out. async_write keeps ONE pending write per fd and the reply
+        // REPLACED it: with TLS 1.3 the two session tickets never left, the client's first record was the
+        // reply, and its decryption failed ("bad record mac", the session dropped; measured 5-7% of the sessions
+        // on a loaded machine, none on an idle one, none with TLS 1.2). So: no more reads until this write is out.
+        loop->pause_read(fd);
+        loop->async_write(fd, std::move(out), [this, fd, sess, next](bool ok) {
             if (!ok) { close_session(fd); return; }
+            // reading was paused above: re-arm it (the fd may be gone — a new connection can already have its number)
+            if (!sess->closed) read_more(fd, sess);
             next();
         });
     }

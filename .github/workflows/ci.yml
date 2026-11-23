@@ -1423,6 +1423,9 @@ jobs:
           bash tests/smtp_late_reply_test.sh build/lk-fcgi 7834
           bash tests/smtp_pipelining_test.sh build/lk-fcgi 7841
           bash tests/mail_capabilities_test.sh build/lk-fcgi 7860
+          # TLS 1.3: the first command right behind the client's Finished must not replace the session
+          # tickets still waiting to be written (a "bad record mac", the session dropped)
+          bash tests/smtp_starttls_load_test.sh build/lk-fcgi 7870
           # mail::send to a remote SMTP server: TLS before the login, an untrusted or wrongly
           # named certificate refused, no fall back to plain text, a refused login reported
           # without the password

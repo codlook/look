@@ -77,6 +77,8 @@ jobs:
           bash tests/shared_map_concurrent_test.sh ./build-asan/lk-fcgi
           # stacks given back (madvise) and reused cold by the next connection
           LOOK_TEST_NO_TIMING=1 bash tests/fiber_stack_cache_trim_test.sh ./build-asan/lk-fcgi
+          # STARTTLS with TLS 1.3, the first command right behind the Finished (the TLS output is written whole, in order)
+          bash tests/smtp_starttls_load_test.sh ./build-asan/lk-fcgi 7870 150
           ./build-asan/lk tests/assoc_index_test.lk | grep -q 'all checks passed'
       # MySQL and PostgreSQL clients against a hostile server: mutated replies (cut, flipped,
       # repeated packets, broken lengths, extra result sets, errors between rows) through the real
