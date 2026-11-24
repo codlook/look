@@ -7,6 +7,7 @@
 #include "look/fiber.h"
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include "look/interpreter.h"
 #include "look/mysql_client.h"
 #include "look/sqlite_client.h"
@@ -148,6 +149,10 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         i++;
         auto arr = std::make_shared<std::vector<Value>>();
         arr->push_back(Value(std::string("__assoc__")));
+        // key -> position of its value in arr. Looking the key up in arr itself compared it with every key before
+        // it (and copied each of them): the time grew with the SQUARE of the number of keys — a JSON body of 40,000
+        // keys (860 KB) held a worker for 9 s, one of the 10 MB default limit for minutes.
+        std::unordered_map<std::string, size_t> key_pos;
         json_skip_ws(s, i);
         while (i < s.size() && s[i] != '}') {
             size_t before = i;                       // ilerleme güvencesi
@@ -163,15 +168,13 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
             // (JS/Go/Python/PHP ile aynı). Eski davranış "ilk kazanır + ikisini de tut"
             // idi → gateway "user" görüp geçirir, backend "admin" görür (JSON interop
             // yetki atlatma). Yerinde güncelle: anahtar sona kaymasın (o da uyumsuzluk).
-            bool dup = false;
-            for (size_t k = 1; k + 1 < arr->size(); k += 2) {
-                if ((*arr)[k].type() == Value::STRING && (*arr)[k].to_string() == key) {
-                    (*arr)[k + 1] = val;   // konum sabit, değer güncellenir
-                    dup = true;
-                    break;
-                }
+            auto hit = key_pos.find(key);
+            if (hit != key_pos.end()) {
+                (*arr)[hit->second] = val;   // konum sabit, değer güncellenir
+            } else {
+                key_pos.emplace(key, arr->size() + 1);
+                arr->push_back(Value(key)); arr->push_back(val);
             }
-            if (!dup) { arr->push_back(Value(key)); arr->push_back(val); }
             json_skip_ws(s, i);
             if (i < s.size() && s[i] == ',') i++;
             json_skip_ws(s, i);
