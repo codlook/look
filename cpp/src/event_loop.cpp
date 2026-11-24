@@ -43,7 +43,9 @@ struct FdEntry {
     enum class Kind { SERVER, CLIENT } kind = Kind::CLIENT;
     AcceptCb    accept_cb;
     ReadCb      read_cb;
-    WriteCb     write_cb;
+    // Writes wait here in the order they were asked for: write_buf holds the bytes of ALL of them that are not
+    // out yet, write_cbs one callback per write, all called once the buffer is empty (see async_write).
+    std::vector<WriteCb> write_cbs;
     std::string write_buf;
     size_t      write_pos = 0;
     std::mutex  mtx;
@@ -163,15 +165,33 @@ void EpollEventLoop::async_read(int fd, ReadCb cb) {
     epoll_ctl(impl_->epfd, EPOLL_CTL_MOD, fd, &ev);
 }
 
+// Bytes that may wait for one fd. A peer that never reads must not grow the buffer without end: past this the write is
+// refused (cb(false)) and the caller closes the connection, as for any failed write.
+static constexpr size_t kMaxPendingWrite = size_t(4) << 20;
+
 void EpollEventLoop::async_write(int fd, std::string data, WriteCb cb) {
     auto entry = impl_->get(fd);
     if (!entry) { if (cb) cb(false); return; }
+    bool refused = false;
     {
         std::lock_guard<std::mutex> lk(entry->mtx);
-        entry->write_buf = std::move(data);
-        entry->write_pos = 0;
-        entry->write_cb  = std::move(cb);
+        const size_t pending = entry->write_buf.size() - entry->write_pos;
+        if (pending == 0) {
+            entry->write_buf = std::move(data);
+            entry->write_pos = 0;
+            entry->write_cbs.clear();
+            entry->write_cbs.push_back(std::move(cb));
+        } else if (pending + data.size() > kMaxPendingWrite) {
+            refused = true;
+        } else {
+            // A write is still on its way (the peer has not taken it all). It used to be REPLACED by this one:
+            // its bytes were never sent and its callback never called (SMTP over TLS 1.3 lost its session tickets
+            // that way: "bad record mac" at the client). Queue behind it instead; callbacks run in the same order.
+            entry->write_buf.append(data);
+            entry->write_cbs.push_back(std::move(cb));
+        }
     }
+    if (refused) { if (cb) cb(false); return; }
     epoll_event ev{};
     ev.events  = EPOLLOUT;
     ev.data.fd = fd;
@@ -331,7 +351,7 @@ void EpollEventLoop::run() {
             }
 
             if ((events[i].events & EPOLLOUT) && !entry->closed.load()) {
-                WriteCb cb;
+                std::vector<WriteCb> cbs;
                 bool done = false;
                 {
                     std::lock_guard<std::mutex> lk(entry->mtx);
@@ -350,8 +370,8 @@ void EpollEventLoop::run() {
                     }
                     done = (entry->write_pos >= entry->write_buf.size());
                     if (done) {
-                        cb = entry->write_cb;
-                        entry->write_cb = nullptr;
+                        cbs = std::move(entry->write_cbs);
+                        entry->write_cbs.clear();
                         entry->write_buf.clear();
                         entry->write_pos = 0;
                     }
@@ -361,7 +381,8 @@ void EpollEventLoop::run() {
                     cev.events  = EPOLLIN | EPOLLET;
                     cev.data.fd = fd;
                     epoll_ctl(impl_->epfd, EPOLL_CTL_MOD, fd, &cev);
-                    if (cb) cb(true);
+                    // one callback per write, in the order the writes were asked for; a callback may start the next write
+                    for (auto& c : cbs) if (c) c(true);
                 }
             }
         }

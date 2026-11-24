@@ -1052,13 +1052,17 @@ bool ImapServer::start() {
     }
     impl_->ssl_ctx = Impl::make_ssl_ctx();   // null = no certificate env (plaintext dev)
     impl_->running = true;
-    impl_->accept_thread = std::thread([this]() { impl_->accept_loop(impl_->listen_fd, false); });
+    // The descriptor goes to the thread BY VALUE: stop() sets listen_fd to -1 after it closes it, and a thread
+    // that reads the member when it starts would race with that (ThreadSanitizer: data race).
+    { const int lfd = impl_->listen_fd;
+      impl_->accept_thread = std::thread([this, lfd]() { impl_->accept_loop(lfd, false); }); }
 
     // IMAPS (implicit TLS) — only if certificate + port are present.
     if (impl_->ssl_ctx && impl_->port_imaps > 0) {
         impl_->listen_fd_tls = Impl::make_server_fd(impl_->port_imaps);
         if (impl_->listen_fd_tls >= 0) {
-            impl_->accept_thread_tls = std::thread([this]() { impl_->accept_loop(impl_->listen_fd_tls, true); });
+            const int tfd = impl_->listen_fd_tls;
+            impl_->accept_thread_tls = std::thread([this, tfd]() { impl_->accept_loop(tfd, true); });
             Logger::instance().log(LogLevel::LOG_INFO, "IMAP",
                 "IMAPS (implicit TLS) listening on port " + std::to_string(impl_->port_imaps));
         }

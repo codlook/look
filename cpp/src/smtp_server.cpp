@@ -491,7 +491,8 @@ struct SmtpSession {
 // Up to 1.0.17 the handshake was done on the socket in the worker, then the loop read the raw bytes itself
 // and told SSL_read to read from the socket AGAIN (the bytes were already consumed) and replies
 // were written unencrypted: a TLS sender got no reply at all (measured). In epoll there is
-// a single pending write per fd: the whole encrypted output of a step goes in ONE async_write.
+// the writes of one fd wait in a queue, in order (EpollEventLoop::async_write); the whole encrypted output of a step
+// still goes in ONE async_write, so its bytes leave in the order OpenSSL produced them.
 static std::string smtp_tls_drain(SSL* ssl) {
     std::string out;
     BIO* w = SSL_get_wbio(ssl);
@@ -1271,11 +1272,13 @@ struct SmtpServer::Impl {
         if (out.empty()) { next(); return; }
         // The loop keeps reading the socket until it is empty and hands every piece to this callback. A client
         // that sends its Finished and its first command in one go (the second piece is already waiting when the
-        // handshake output is queued) would get that command processed — and its reply queued with
-        // async_write — BEFORE this write is out. async_write keeps ONE pending write per fd and the reply
-        // REPLACED it: with TLS 1.3 the two session tickets never left, the client's first record was the
-        // reply, and its decryption failed ("bad record mac", the session dropped; measured 5-7% of the sessions
-        // on a loaded machine, none on an idle one, none with TLS 1.2). So: no more reads until this write is out.
+        // handshake output is queued) would get that command processed BEFORE this write is out: the steps of a
+        // session must run one after the other (this step's plain text first, then the next piece's).
+        // History: async_write used to keep ONE pending write per fd, and the reply to that command REPLACED this
+        // output: with TLS 1.3 the two session tickets never left, the client's first record was the reply and its
+        // decryption failed ("bad record mac", the session dropped; 3-7% of the sessions on a loaded machine,
+        // none on an idle one, none with TLS 1.2). The loop queues writes now, but the ORDER of the steps is
+        // this callback's business: no more reads until this write is out.
         loop->pause_read(fd);
         loop->async_write(fd, std::move(out), [this, fd, sess, next](bool ok) {
             if (!ok) { close_session(fd); return; }

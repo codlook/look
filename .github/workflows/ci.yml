@@ -1426,6 +1426,9 @@ jobs:
           # TLS 1.3: the first command right behind the client's Finished must not replace the session
           # tickets still waiting to be written (a "bad record mac", the session dropped)
           bash tests/smtp_starttls_load_test.sh build/lk-fcgi 7870
+          # the event loop queues writes behind each other (a second async_write used to REPLACE a pending one)
+          g++ -std=c++17 -Iinclude tests/event_loop_write_queue_test.cpp src/event_loop.cpp -lpthread -o /tmp/event_loop_write_queue_test
+          /tmp/event_loop_write_queue_test
           # mail::send to a remote SMTP server: TLS before the login, an untrusted or wrongly
           # named certificate refused, no fall back to plain text, a refused login reported
           # without the password
