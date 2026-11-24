@@ -11,6 +11,7 @@
 #include "look/fiber.h"
 #include "look/request_scope.h"
 #include <cmath>
+#include <map>
 #include <cstdint>
 #include "look/runtime_host.h"
 #include "look/mysql_client.h"
@@ -159,7 +160,11 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         // On a small object (most real bodies) a linear scan is cheap and allocation-free; the index is built only when
         // the SMALL key count is exceeded → as fast as before on a small object, O(n) on a large one.
         constexpr size_t SMALL = 16;
-        std::unordered_map<std::string, size_t> pos;   // no allocation while empty
+        // An ORDERED tree, not an unordered_map: std::hash<std::string> has a fixed seed and its steps can be undone, so
+        // keys made to share one hash value (40,000 of them, a 1.2 MB body) put everything into one bucket and the
+        // quadratic time came back (measured on 1.1.5: 8.2 s; 0.02 s for ordinary keys). A tree is O(log n) per key
+        // whatever the keys are, and needs no seed.
+        std::map<std::string, size_t> pos;   // no allocation while empty
         auto find_key = [&](const std::string& key) -> size_t {   // value position; 0 = absent
             size_t nkeys = (arr->size() - 1) / 2;
             if (nkeys <= SMALL) {

@@ -1673,6 +1673,14 @@ jobs:
           cd cpp
           python3 tests/json_differential_test.py ./build/lk
 
+      # A JSON body whose keys all share one std::hash value (made with tests/hash_collide_gen.cpp) must not hold a
+      # worker: the key table is an ordered tree, not an unordered_map with a fixed-seed hash (8.2 s before, 1.1.5).
+      - name: JSON hash flooding does not hold a worker
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/json_hash_flood_test.sh ./build/lk-fcgi
+
       # Query strings, form bodies and route parameters: random requests to a real lk-fcgi --mode http
       # server, what request::all() / request::param() see compared with a small model of the
       # documented decoding rules. Fixed seed; LOOK_FORM_FUZZ_CASES=N runs more.
