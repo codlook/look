@@ -56,6 +56,8 @@ jobs:
           bash cpp/tests/json_hash_flood_test.sh cpp/build/lk-fcgi
           # cache:: keys and queue:: names that share one std::hash value: a seeded SipHash, not the fixed-seed library hash
           bash cpp/tests/cache_queue_hash_flood_test.sh cpp/build/lk
+          # the seeded hash is SipHash-1-3: published-style vectors, so a broken line cannot weaken it unnoticed
+          g++ -std=c++17 -Icpp/include cpp/tests/key_hash_test.cpp -o /tmp/key_hash_test && /tmp/key_hash_test
 
       # stdlib adversarial guard — malformed/boundary/overflow inputs to the
       # previously-unlocked stdlib surface (array boundary, regex ReDoS, template
