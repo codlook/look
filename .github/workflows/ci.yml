@@ -1688,6 +1688,8 @@ jobs:
         run: |
           cd cpp
           bash tests/cache_queue_hash_flood_test.sh ./build/lk
+          # the seeded hash is SipHash-1-3: published-style vectors, so a broken line cannot weaken it unnoticed
+          g++ -std=c++17 -Iinclude tests/key_hash_test.cpp -o /tmp/key_hash_test && /tmp/key_hash_test
 
       # Query strings, form bodies and route parameters: random requests to a real lk-fcgi --mode http
       # server, what request::all() / request::param() see compared with a small model of the
