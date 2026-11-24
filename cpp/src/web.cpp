@@ -1,4 +1,5 @@
 #include "look/web.h"
+#include "look/multipart.h"   // parse_multipart_body, parse_media_type (Go mime/multipart model)
 #ifndef _WIN32
 extern char** environ;   // CGI request headers (HTTP_*) — init_from_cgi
 #endif
@@ -393,48 +394,6 @@ void WebContext::set_status(int code) {
 
 // POST body — by content_type. SINGLE source; the FastCGI, --mode http and CGI
 // entry points all call this (see web.h).
-// Content-Type → media type (lowercase) + parameters (name lowercase; value a token or quoted
-// string, \ escapes decoded). Go mime.ParseMediaType model. false = malformed syntax.
-static bool parse_media_type(const std::string& ct, std::string& type,
-                             std::map<std::string, std::string>& params) {
-    auto lower = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-    auto trim = [](const std::string& s) {
-        size_t a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t");
-        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
-    };
-    size_t semi = ct.find(';');
-    type = lower(trim(ct.substr(0, semi)));
-    if (type.empty()) return false;
-    size_t i = (semi == std::string::npos) ? ct.size() : semi + 1;
-    while (i < ct.size()) {
-        while (i < ct.size() && (ct[i] == ' ' || ct[i] == '\t' || ct[i] == ';')) i++;
-        if (i >= ct.size()) break;
-        size_t ks = i;
-        while (i < ct.size() && ct[i] != '=' && ct[i] != ';') i++;
-        if (i >= ct.size() || ct[i] != '=') return false;            // parameter without a value
-        std::string key = lower(trim(ct.substr(ks, i - ks)));
-        i++;
-        std::string val;
-        if (i < ct.size() && ct[i] == '"') {
-            i++;
-            bool closed = false;
-            while (i < ct.size()) {
-                if (ct[i] == '\\' && i + 1 < ct.size()) { val.push_back(ct[i + 1]); i += 2; continue; }
-                if (ct[i] == '"') { closed = true; i++; break; }
-                val.push_back(ct[i++]);
-            }
-            if (!closed) return false;
-        } else {
-            size_t vs = i;
-            while (i < ct.size() && ct[i] != ';') i++;
-            val = trim(ct.substr(vs, i - vs));
-        }
-        if (key.empty() || params.count(key)) return false;           // empty or duplicate name
-        params[key] = val;
-    }
-    return true;
-}
-
 // RFC 2046 §5.1.1: boundary is 1-70 characters, bchars set, no trailing space.
 static bool multipart_boundary_ok(const std::string& b) {
     if (b.empty() || b.size() > 70 || b.back() == ' ') return false;
@@ -452,7 +411,19 @@ void WebContext::parse_post_body() {
     // "boundary=B; charset=utf-8" and "BOUNDARY=B" had ALL their fields SILENTLY lost.
     std::string type;
     std::map<std::string, std::string> params;
-    if (!parse_media_type(content_type, type, params)) return;   // body with an unreadable type: not parsed
+    if (!parse_media_type(content_type, type, params)) {
+        // An unreadable type: the body is not parsed — but a multipart/form-data whose parameters cannot be read
+        // (an empty or unquoted odd boundary) is a 400, as Go's MultipartReader says, not a silent empty form.
+        std::string head = content_type.substr(0, content_type.find(';'));
+        for (auto& c : head) c = (char)std::tolower((unsigned char)c);
+        while (!head.empty() && (head.back() == ' ' || head.back() == '\t')) head.pop_back();
+        while (!head.empty() && (head.front() == ' ' || head.front() == '\t')) head.erase(head.begin());
+        if (head == "multipart/form-data") {
+            body_error_status = 400;
+            body_error = "multipart/form-data without a valid boundary parameter";
+        }
+        return;
+    }
     if (type == "application/x-www-form-urlencoded") {
         post_params = parse_query(body);
     } else if (type == "multipart/form-data") {
@@ -467,103 +438,24 @@ void WebContext::parse_post_body() {
 }
 
 void WebContext::parse_multipart(const std::string& boundary) {
-    // RFC 2046 multipart — delimiter: "--" + boundary
-    std::string delim = "--" + boundary;
-    std::string end_delim = delim + "--";
-
-    size_t pos = body.find(delim);
-    if (pos == std::string::npos) return;
-
+    // The reader is look/multipart.h (Go's mime/multipart model, checked against Go by
+    // tests/multipart_differential_test.py): a delimiter is a LINE, a cut or malformed body is an error, a part
+    // without a field name or with a disposition other than form-data is skipped.
     // Part count cap — a 10MB body can hold ~250K parts of ~40-byte file parts
-    // → each one costs SHA-256 + a temp file = disk/CPU amplification DoS.
-    int part_count = 0;
-    static constexpr int MAX_PARTS = 1000;
-
-    while (true) {
-        pos += delim.size();
-        if (pos + 2 <= body.size() && body.compare(pos, 2, "--") == 0) break;   // closing delimiter
-        // Explicit error when the limit is exceeded (413; Go "multipart: message too large"). Previously the loop broke and
-        // the remaining parts were SILENTLY dropped (_csrf or data in the 1001st field was lost). The counter is
-        // checked AFTER the closing delimiter: exactly 1000 parts are valid.
-        if (++part_count > MAX_PARTS) {
-            body_error_status = 413;
-            body_error = "multipart/form-data with more than " + std::to_string(MAX_PARTS) + " parts";
-            break;
-        }
-        if (pos < body.size() && body[pos] == '\r') pos++;
-        if (pos < body.size() && body[pos] == '\n') pos++;
-
-        // Read the header section (up to \r\n\r\n)
-        size_t header_end = body.find("\r\n\r\n", pos);
-        if (header_end == std::string::npos) break;
-        std::string raw_headers = body.substr(pos, header_end - pos);
-        pos = header_end + 4;
-
-        // Parse the Content-Disposition header
-        std::string field_name, filename;
-        {
-            std::istringstream hs(raw_headers);
-            std::string line;
-            while (std::getline(hs, line)) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                // Content-Disposition: form-data; name="field"; filename="file.jpg"
-                // Header name is case-insensitive (RFC 7578 → RFC 2183/822; Go textproto). Previously
-                // fields from a client writing "content-disposition:" were ignored.
-                static const std::string CD = "content-disposition:";
-                if (line.size() >= CD.size() &&
-                    std::equal(CD.begin(), CD.end(), line.begin(),
-                               [](char a, char b) { return a == std::tolower((unsigned char)b); })) {
-                    // Parameters are separated by ';', order is free (RFC 7578), the value may be quoted.
-                    // Previously "name=\"" was searched as plain text: with the order `filename="a.jpg"; name="avatar"`
-                    // the field name came out "a.jpg" (the name= inside filename= matched).
-                    auto extract = [&](const std::string& key) -> std::string {
-                        size_t i = line.find(':');
-                        if (i == std::string::npos) return {};
-                        size_t n = line.size();
-                        i++;
-                        while (i < n) {
-                            while (i < n && (line[i] == ' ' || line[i] == '\t' || line[i] == ';')) i++;
-                            size_t ks = i;
-                            while (i < n && line[i] != '=' && line[i] != ';') i++;
-                            std::string k = line.substr(ks, i - ks);
-                            while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
-                            std::string v;
-                            if (i < n && line[i] == '=') {
-                                i++;
-                                while (i < n && (line[i] == ' ' || line[i] == '\t')) i++;
-                                if (i < n && line[i] == '"') {
-                                    i++;
-                                    while (i < n && line[i] != '"') {
-                                        if (line[i] == '\\' && i + 1 < n) i++;   // \" and \\ escapes
-                                        v.push_back(line[i++]);
-                                    }
-                                    if (i < n) i++;   // closing quote
-                                    while (i < n && line[i] != ';') i++;
-                                } else {
-                                    size_t vs = i;
-                                    while (i < n && line[i] != ';') i++;
-                                    v = line.substr(vs, i - vs);
-                                    while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
-                                }
-                            }
-                            if (k.size() == key.size() &&
-                                std::equal(k.begin(), k.end(), key.begin(),
-                                           [](char a, char b) { return std::tolower((unsigned char)a) == b; }))
-                                return v;
-                        }
-                        return {};
-                    };
-                    field_name = extract("name");
-                    filename   = extract("filename");
-                }
-            }
-        }
-
-        // Find the part body (up to the next delimiter)
-        size_t part_end = body.find("\r\n" + delim, pos);
-        if (part_end == std::string::npos) break;
-        std::string part_data = body.substr(pos, part_end - pos);
-        pos = part_end + 2;
+    // → each one costs SHA-256 + a temp file = disk/CPU amplification DoS. Exactly 1000 parts are valid; more is
+    // an explicit 413 (Go "multipart: message too large"), never a silent drop of the later fields.
+    static constexpr size_t MAX_PARTS = 1000;
+    MultipartResult mr = parse_multipart_body(body, boundary, MAX_PARTS);
+    if (!mr.error.empty()) {
+        body_error_status = mr.too_many ? 413 : 400;
+        body_error = mr.too_many ? "multipart/form-data with more than " + std::to_string(MAX_PARTS) + " parts"
+                                 : "multipart/form-data: " + mr.error;
+        return;
+    }
+    for (MultipartPart& mp : mr.parts) {
+        const std::string field_name = mp.name;
+        const std::string filename   = mp.filename;
+        const std::string& part_data = mp.data;
 
         if (!filename.empty() && !field_name.empty()) {
             // File part — write to a temp file
@@ -631,11 +523,6 @@ void WebContext::parse_multipart(const std::string& boundary) {
             // Normal form field
             post_params[field_name] = part_data;
         }
-
-        // Find the next delimiter
-        size_t next = body.find(delim, pos);
-        if (next == std::string::npos) break;
-        pos = next;
     }
 }
 

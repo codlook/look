@@ -1733,6 +1733,16 @@ jobs:
           bash tests/url_parse_referee_test.sh 30000 1
           bash tests/url_parse_referee_test.sh 30000 2
 
+      # multipart/form-data: random bodies (a boundary prefix inside the data, a preamble that mentions the boundary, delimiter
+      # lines with trailing spaces, repeated or odd Content-Disposition parameters, LF line ends, a cut body, ...) read by
+      # lk-fcgi and by Go's mime/multipart (tests/input_fuzz/multipart_referee.go). LOOK reading a field or file Go does not
+      # (or other data), or accepting a body Go refuses, fails.
+      - name: multipart/form-data vs Go mime/multipart (random bodies)
+        timeout-minutes: 10
+        run: |
+          cd cpp
+          python3 tests/multipart_differential_test.py ./build/lk-fcgi
+
       # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
