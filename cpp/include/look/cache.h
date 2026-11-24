@@ -2,6 +2,7 @@
 #include "interpreter.h"
 #include <string>
 #include <unordered_map>
+#include "look/key_hash.h"
 #include <chrono>
 #include <mutex>
 #include <optional>
@@ -28,7 +29,7 @@ public:
     std::vector<std::string> keys();
 
 private:
-    std::unordered_map<std::string, CacheEntry> store_;
+    std::unordered_map<std::string, CacheEntry, KeyHash> store_;
     mutable std::mutex                           mtx_;
 
     bool is_expired(const CacheEntry& e) const;

@@ -3,6 +3,7 @@
 #include <string>
 #include <deque>
 #include <unordered_map>
+#include "look/key_hash.h"
 #include <mutex>
 #include <optional>
 
@@ -23,7 +24,7 @@ public:
     std::vector<std::string> names();
 
 private:
-    std::unordered_map<std::string, std::deque<Value>> queues_;
+    std::unordered_map<std::string, std::deque<Value>, KeyHash> queues_;
     mutable std::mutex mtx_;
 };
 
