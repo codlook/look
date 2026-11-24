@@ -26,6 +26,12 @@ namespace look {
 
 uint64_t look_key_hash(const char* p, size_t n) noexcept;   // value.cpp (SipHash-1-3, process seed)
 
+// Hash for std::unordered_map<std::string, ...> whose keys can come from a request (cache keys, queue names):
+// the C++ library hash has a fixed seed, and keys that share one hash value can be built (hash flooding).
+struct KeyHash {
+    size_t operator()(const std::string& s) const noexcept { return (size_t)look_key_hash(s.data(), s.size()); }
+};
+
 struct AssocIndex {
     std::vector<uint32_t> slots;   // 0 = empty; others are the key's position in the store (odd number ≥ 1)
     size_t  seen = 0;              // store length the index covers

@@ -1681,6 +1681,14 @@ jobs:
           cd cpp
           bash tests/json_hash_flood_test.sh ./build/lk-fcgi
 
+      # cache:: keys and queue:: names that share one std::hash value must not make every call walk one chain
+      # (15.8 s and 4.9 s for 30,000 keys before; the maps are hashed with look_key_hash now).
+      - name: cache and queue hash flooding
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/cache_queue_hash_flood_test.sh ./build/lk
+
       # Query strings, form bodies and route parameters: random requests to a real lk-fcgi --mode http
       # server, what request::all() / request::param() see compared with a small model of the
       # documented decoding rules. Fixed seed; LOOK_FORM_FUZZ_CASES=N runs more.
