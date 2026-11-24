@@ -2,6 +2,7 @@
 #include <string>
 #include <map>
 #include <functional>
+#include "look/url_parse.h"   // ParsedUrl, parse_url
 
 namespace look {
 
@@ -29,16 +30,6 @@ struct HttpOptions {
     std::string proxy;                       // "http://host:port" — routes traffic through a proxy
 };
 
-// Parses "https://host:port/path?query" into parts
-struct ParsedUrl {
-    bool        tls  = false;
-    std::string host;
-    int         port = 80;
-    std::string path;   // includes query string
-    std::string basic_auth;   // "user:pass@" in the URL → base64 for "Authorization: Basic" (Go URL.User)
-};
-
-ParsedUrl   parse_url(const std::string& url);
 HttpClientResponse http_request(
     const std::string& method,
     const std::string& url,

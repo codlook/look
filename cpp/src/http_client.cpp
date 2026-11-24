@@ -9,6 +9,7 @@
 #include "look/ssrf_safe.h"   // SSRF private/special-block decision (pure, table-testable)
 #include "look/gzip_inflate.h"   // gzip response decode (pure, fuzzed)
 #include "look/host_port.h" // host[:port] + port parsing (Go net/url model)
+#include "look/url_parse.h"  // parse_url (tests/url_parse_referee_test.cpp checks it against Go)
 #include "look/charset.h"     // single-byte charset → UTF-8 (iso-8859-9 etc.)
 #include <stdexcept>
 #include <sstream>
@@ -135,82 +136,7 @@ static bool is_ssrf_blocked(const struct addrinfo* res) {
 // fiber-ok: written only AFTER tcp_connect's last suspension point, and the caller reads it immediately
 static thread_local const char* t_conn_error = nullptr;
 
-// ── URL parser ────────────────────────────────────────────────────────────────
-
-static std::string hc_pct_decode(const std::string& s) {
-    std::string o; o.reserve(s.size());
-    auto hx = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size() && hx(s[i + 1]) >= 0 && hx(s[i + 2]) >= 0) {
-            o += (char)(hx(s[i + 1]) * 16 + hx(s[i + 2])); i += 2;
-        } else o += s[i];
-    }
-    return o;
-}
-
-static std::string hc_base64(const std::string& in) {
-    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string o;
-    size_t i = 0;
-    for (; i + 2 < in.size(); i += 3) {
-        unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2];
-        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += T[(v >> 6) & 63]; o += T[v & 63];
-    }
-    if (i + 1 == in.size()) {
-        unsigned v = (unsigned char)in[i] << 16;
-        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += "==";
-    } else if (i + 2 == in.size()) {
-        unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8);
-        o += T[v >> 18]; o += T[(v >> 12) & 63]; o += T[(v >> 6) & 63]; o += '=';
-    }
-    return o;
-}
-
-// Go net/url model:
-//   * the scheme is case-insensitive ("HTTPS://" is valid);
-//   * the authority ends at the first '/', '?' or '#' — it used to be only '/': "http://h?q=1" → host "h?q=1";
-//   * the fragment (#...) is not sent to the server (RFC 9110 §4.2.4);
-//   * "user:pass@" → Basic credentials (percent-decoded; Go Request.URL.User); it used to get mixed into the host;
-//   * port: digits only, 1-65535, empty = default; IPv6 in square brackets (look/host_port.h).
-//     A malformed port used to silently fall back to 80/443 ("http://h:8O80/" → connect to 80).
-ParsedUrl parse_url(const std::string& url) {
-    ParsedUrl r;
-    size_t se = url.find("://");
-    std::string scheme = (se == std::string::npos) ? "" : url.substr(0, se);
-    for (auto& c : scheme) c = (char)std::tolower((unsigned char)c);
-    if (scheme == "https")     { r.tls = true;  r.port = 443; }
-    else if (scheme == "http") { r.tls = false; r.port = 80; }
-    else throw std::runtime_error("http:: Unsupported URL scheme: " + url);
-    std::string s = url.substr(se + 3);
-
-    size_t end = s.find_first_of("/?#");
-    std::string auth = s.substr(0, end);
-    std::string rest = (end == std::string::npos) ? "" : s.substr(end);
-    size_t hash = rest.find('#');
-    if (hash != std::string::npos) rest.erase(hash);
-    if (rest.empty() || rest[0] == '?') rest = "/" + rest;
-    r.path = rest;
-
-    size_t at = auth.rfind('@');
-    if (at != std::string::npos) {
-        std::string ui = auth.substr(0, at);
-        auth = auth.substr(at + 1);
-        size_t c = ui.find(':');
-        std::string user = hc_pct_decode(c == std::string::npos ? ui : ui.substr(0, c));
-        std::string pass = c == std::string::npos ? "" : hc_pct_decode(ui.substr(c + 1));
-        r.basic_auth = hc_base64(user + ":" + pass);
-    }
-    std::string err = look::split_host_port(auth, r.host, r.port);
-    if (!err.empty()) throw std::runtime_error("http:: invalid URL: " + err);
-    if (r.host.empty()) throw std::runtime_error("http:: invalid URL: missing host: " + url);
-    return r;
-}
-
+// ── URL parser: look/url_parse.h ─────────────────────────────────────────────
 // ── Request builder ───────────────────────────────────────────────────────────
 
 // CRLF stripping — prevents request-splitting / header injection in the outgoing request.

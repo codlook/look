@@ -1724,6 +1724,15 @@ jobs:
           bash tests/url_redirect_referee_test.sh 20000 1
           bash tests/url_redirect_referee_test.sh 20000 2
 
+      # What http::get and redirect following connect to (look/url_parse.h parse_url) against Go's net/url: 30,000
+      # random URLs; LOOK must read the same host, port and user info, and refuse what Go cannot read.
+      - name: "http:: URL parsing vs Go net/url (random URLs)"
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/url_parse_referee_test.sh 30000 1
+          bash tests/url_parse_referee_test.sh 30000 2
+
       # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
