@@ -868,6 +868,18 @@ jobs:
           g++ -std=c++17 -Iinclude tests/installer_redirect_test.cpp -o /tmp/irt
           /tmp/irt
 
+      # The same rule against Go's net/url: 20,000 random URLs; LOOK must not follow a host Go reads as another
+      # (https://github.com:x@evil.com/ was followed before) nor a text Go cannot parse.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: installer redirect rule vs Go net/url (random URLs)
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/url_redirect_referee_test.sh 20000 1
+          bash tests/url_redirect_referee_test.sh 20000 2
+
       # SSRF private/özel-blok kararı — seam (look/ssrf_safe.h). http_client'ın getaddrinfo
       # döngüsü bu predikatlara delege eder. Ağsız/DNS'siz: ham byte'tan karar tablosu
       # (metadata 169.254.169.254 · NAT64 64:ff9b · 6to4 2002 · v4-mapped bypass'ları).
