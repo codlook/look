@@ -50,7 +50,10 @@ jobs:
       # before it, so 40,000 keys took 9 s and the 10 MB default body limit allowed minutes of one worker's time.
       - name: JSON bodies with many keys do not hold a worker
         timeout-minutes: 5
-        run: bash cpp/tests/json_many_keys_test.sh cpp/build/lk-fcgi
+        run: |
+          bash cpp/tests/json_many_keys_test.sh cpp/build/lk-fcgi
+          # keys that all share one std::hash value (tests/hash_collide_gen.cpp): an ordered tree, not a fixed-seed hash table
+          bash cpp/tests/json_hash_flood_test.sh cpp/build/lk-fcgi
 
       # stdlib adversarial guard — malformed/boundary/overflow inputs to the
       # previously-unlocked stdlib surface (array boundary, regex ReDoS, template

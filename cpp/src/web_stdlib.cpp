@@ -7,7 +7,7 @@
 #include "look/fiber.h"
 #include <cmath>
 #include <cstdint>
-#include <unordered_map>
+#include <map>
 #include "look/interpreter.h"
 #include "look/mysql_client.h"
 #include "look/sqlite_client.h"
@@ -151,8 +151,11 @@ static Value json_decode_value(const std::string& s, size_t& i, int depth) {
         arr->push_back(Value(std::string("__assoc__")));
         // key -> position of its value in arr. Looking the key up in arr itself compared it with every key before
         // it (and copied each of them): the time grew with the SQUARE of the number of keys — a JSON body of 40,000
-        // keys (860 KB) held a worker for 9 s, one of the 10 MB default limit for minutes.
-        std::unordered_map<std::string, size_t> key_pos;
+        // keys (860 KB) held a worker for 9 s, one of the 10 MB default limit for minutes. An ORDERED tree, not an
+        // unordered_map: std::hash<std::string> has a fixed seed and its steps can be undone, so keys made to share one
+        // hash value put everything into one bucket and the quadratic time came back (measured: 10 s for 40,000 such
+        // keys). A tree is O(log n) per key whatever the keys are, and needs no seed.
+        std::map<std::string, size_t> key_pos;
         json_skip_ws(s, i);
         while (i < s.size() && s[i] != '}') {
             size_t before = i;                       // ilerleme güvencesi
