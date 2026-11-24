@@ -1715,6 +1715,15 @@ jobs:
           cd cpp
           python3 tests/http_differential_test.py ./build/lk-fcgi
 
+      # The installer's redirect rule (look/url_safe.h) against Go's net/url: 20,000 random URLs; LOOK must not follow a
+      # host Go reads as another (https://github.com:x@evil.com/ was followed before) nor a text Go cannot parse.
+      - name: installer redirect rule vs Go net/url (random URLs)
+        timeout-minutes: 5
+        run: |
+          cd cpp
+          bash tests/url_redirect_referee_test.sh 20000 1
+          bash tests/url_redirect_referee_test.sh 20000 2
+
       # installer:: parse layer — NETWORK-FREE (parse_pkg rejections happen BEFORE the download): host restriction
       # (github.com only), invalid name, path-traversal (user + subdir). Positive control:
       # a legitimate name must pass the parse. (Zip-slip/redirect need a real download → C++ unit test
